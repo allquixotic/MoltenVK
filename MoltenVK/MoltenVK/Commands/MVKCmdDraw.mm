@@ -818,6 +818,7 @@ VkResult MVKCmdDrawIndirect::setContent(MVKCommandBuffer* cmdBuff,
 	}
 	MVKBuffer* mvkCountBuffer = (MVKBuffer*)countBuffer;
 	_mtlCountBuffer = mvkCountBuffer->getMTLBuffer();
+	_drawCount = mvkPerfICountCap(_drawCount);		// C4
 	_mtlCountBufferOffset = mvkCountBuffer->getMTLBufferOffset() + countBufferOffset;
 	return VK_SUCCESS;
 }
@@ -1220,6 +1221,7 @@ VkResult MVKCmdDrawIndexedIndirect::setContent(MVKCommandBuffer* cmdBuff,
 	}
 	MVKBuffer* mvkCountBuffer = (MVKBuffer*)countBuffer;
 	_mtlCountBuffer = mvkCountBuffer->getMTLBuffer();
+	_drawCount = mvkPerfICountCap(_drawCount);		// C4
 	_mtlCountBufferOffset = mvkCountBuffer->getMTLBufferOffset() + countBufferOffset;
 	return VK_SUCCESS;
 }

@@ -32,6 +32,25 @@ enum MVKPerfICountStat : uint32_t {
 	kMVKPerfICountStatCount
 };
 
+/**
+ * Enshrouded perf C4: the most Metal draws to encode for one vkCmdDraw[Indexed]IndirectCount.
+ * MoltenVK encodes maxDrawCount draws on the CPU and zeroes the unused ones on the GPU; Enshrouded asks
+ * for up to 10,368 per command but uses at most ~101 (D12, 25 Oct 2026). MVK_PERF_ICOUNT_MAX_DRAWS caps
+ * maxDrawCount (default 512; 0 = no cap). With MVK_PERF_ICOUNT_STATS=1, "count > max" in the icount lines
+ * then counts commands the cap truncated.
+ */
+inline uint32_t mvkPerfICountCap(uint32_t maxDrawCount) {
+	static const uint32_t cap = [] {
+		const char* s = getenv("MVK_PERF_ICOUNT_MAX_DRAWS");
+		long n = s ? strtol(s, nullptr, 0) : 512;
+		uint32_t c = n > 0 ? (uint32_t)n : 0;
+		if (c) { fprintf(stderr, "[mvk-perf] C4 indirect-count draws capped at %u per command\n", c); }
+		else   { fprintf(stderr, "[mvk-perf] C4 indirect-count cap off\n"); }
+		return c;
+	}();
+	return cap ? std::min(maxDrawCount, cap) : maxDrawCount;
+}
+
 inline bool mvkPerfICountStatsEnabled() {
 	static const bool on = [] { const char* s = getenv("MVK_PERF_ICOUNT_STATS"); return s && atoi(s) != 0; }();
 	return on;
