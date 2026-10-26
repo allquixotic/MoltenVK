@@ -87,6 +87,11 @@ inline void mvkPerfICountRecord(id<MTLBuffer> buff, uint32_t maxDrawCount) {
 	std::lock_guard<std::mutex> guard(lock);
 	commands++; encoded += maxDrawCount; histogram[maxDrawCount]++;
 
+	// C4d: the starting cap, read at the first command (before any raise), and the high-water mark: the
+	// largest cap a real truncation has needed this session. The fall-back never goes below either.
+	static const uint32_t startCap = mvkPerfICountCapValue().load(std::memory_order_relaxed);
+	static uint32_t floorCap = 0;
+
 	// C4 self-correction: more truncated commands since the last look -> double the cap.
 	const volatile uint32_t* stats = (const volatile uint32_t*)buff.contents;
 	static uint32_t lastOverMax = 0;
@@ -96,8 +101,9 @@ inline void mvkPerfICountRecord(id<MTLBuffer> buff, uint32_t maxDrawCount) {
 		uint32_t cap = capValue.load(std::memory_order_relaxed);
 		if (cap && cap < (1u << 20)) {
 			capValue.store(cap * 2, std::memory_order_relaxed);
-			fprintf(stderr, "[mvk-perf] C4: %u more truncated commands (largest real count so far %u); cap raised %u -> %u\n",
-					overMax - lastOverMax, stats[kMVKPerfICountMaxReal], cap, cap * 2);
+			floorCap = std::max(floorCap, cap * 2);
+			fprintf(stderr, "[mvk-perf] C4: %u more truncated commands (largest real count so far %u); cap raised %u -> %u (floor now %u)\n",
+					overMax - lastOverMax, stats[kMVKPerfICountMaxReal], cap, cap * 2, floorCap);
 			fflush(stderr);
 		}
 		lastOverMax = overMax;
@@ -110,7 +116,6 @@ inline void mvkPerfICountRecord(id<MTLBuffer> buff, uint32_t maxDrawCount) {
 	// maximum), never below its starting value. Truncations still double it at once (above).
 	// MVK_PERF_ICOUNT_DECAY=0 keeps the old rise-only behaviour.
 	static const bool decay = [] { const char* s = getenv("MVK_PERF_ICOUNT_DECAY"); return !s || atoi(s) != 0; }();
-	static const uint32_t startCap = mvkPerfICountCapValue().load(std::memory_order_relaxed);
 	static uint32_t quietWindows = 0, lastOverMaxSeen = 0;
 	uint32_t windowMax = stats[kMVKPerfICountMaxReal];
 	if (decay && startCap) {
@@ -119,9 +124,11 @@ inline void mvkPerfICountRecord(id<MTLBuffer> buff, uint32_t maxDrawCount) {
 		bool truncated = stats[kMVKPerfICountOverMax] != lastOverMaxSeen;
 		lastOverMaxSeen = stats[kMVKPerfICountOverMax];
 		quietWindows = (!truncated && windowMax * 5 <= cap * 2) ? quietWindows + 1 : 0;
-		if (cap > startCap && quietWindows >= 3) {
-			capValue.store(cap / 2, std::memory_order_relaxed);
-			fprintf(stderr, "[mvk-perf] C4d: largest real count %u in the last windows; cap lowered %u -> %u\n", windowMax, cap, cap / 2);
+		uint32_t lowest = std::max(startCap, floorCap);	// high-water mark: never below what this session needed
+		if (cap > lowest && quietWindows >= 3) {
+			uint32_t lower = std::max(cap / 2, lowest);
+			capValue.store(lower, std::memory_order_relaxed);
+			fprintf(stderr, "[mvk-perf] C4d: largest real count %u in the last windows; cap lowered %u -> %u (floor %u)\n", windowMax, cap, lower, lowest);
 			quietWindows = 0;
 		}
 		((volatile uint32_t*)buff.contents)[kMVKPerfICountMaxReal] = 0;	// next window (a GPU max may race this; harmless)
