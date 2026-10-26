@@ -577,6 +577,28 @@ MVKShaderModule::~MVKShaderModule() {
 #pragma mark -
 #pragma mark MVKShaderLibraryCompiler
 
+// Enshrouded perf C12: choose the Metal math mode per shader instead of all-or-nothing fast math.
+// MVK_PERF_MATH_MODE:
+//   relaxed       every shader in Metal Relaxed mode (fast-math reassociation and contraction, but NaN/Inf kept)
+//   compute-fast  compute kernels in Fast mode; vertex and fragment shaders keep the shader's own flags (Safe here)
+// Unset: unchanged (MVK_CONFIG_FAST_MATH_ENABLED decides). Leave MVK_CONFIG_FAST_MATH_ENABLED unset with this,
+// since its "always" setting overrides these flags.
+static uint32_t mvkPerfMathFlags(NSString* mslSourceCode, uint32_t fpFastMathFlags) {
+	static const int mode = [] {
+		const char* s = getenv("MVK_PERF_MATH_MODE");
+		int m = !s ? 0 : !strcmp(s, "relaxed") ? 1 : !strcmp(s, "compute-fast") ? 2 : 0;
+		fprintf(stderr, "[mvk-perf] C12 math mode: %s\n", m == 1 ? "Relaxed for all shaders" : m == 2 ? "Fast for compute, shader's own for vertex/fragment" : "unchanged");
+		return m;
+	}();
+	const uint32_t relaxed = spv::FPFastMathModeNSZMask | spv::FPFastMathModeAllowRecipMask |
+							 spv::FPFastMathModeAllowReassocMask | spv::FPFastMathModeAllowContractMask;
+	switch (mode) {
+		case 1: return relaxed;
+		case 2: return [mslSourceCode containsString: @"\nkernel void "] ? (relaxed | spv::FPFastMathModeNotNaNMask | spv::FPFastMathModeNotInfMask) : fpFastMathFlags;
+		default: return fpFastMathFlags;
+	}
+}
+
 id<MTLLibrary> MVKShaderLibraryCompiler::newMTLLibrary(NSString* mslSourceCode,
 													   const SPIRVToMSLConversionResultInfo& shaderConversionResults,
 													   const vector<pair<MSLSpecializationMacroInfo, MVKShaderMacroValue>>& specializationMacroDef) {
@@ -586,7 +608,7 @@ id<MTLLibrary> MVKShaderLibraryCompiler::newMTLLibrary(NSString* mslSourceCode,
 		auto mtlDev = getMTLDevice();
 		@synchronized (mtlDev) {
 			@autoreleasepool {
-				auto mtlCompileOptions = getDevice()->getMTLCompileOptions(shaderConversionResults.entryPoint.fpFastMathFlags,
+				auto mtlCompileOptions = getDevice()->getMTLCompileOptions(mvkPerfMathFlags(mslSourceCode, shaderConversionResults.entryPoint.fpFastMathFlags),
 																		   shaderConversionResults.isPositionInvariant);
 				if (!specializationMacroDef.empty()) {
 					size_t macro_count = specializationMacroDef.size();
