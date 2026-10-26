@@ -1113,8 +1113,23 @@ bool MVKCommandEncoder::perfTryInlineComputeBarrier(uint64_t sourceStageMask, ui
 	return true;
 }
 
+// Enshrouded perf C3: vkCmdDispatch encoders run concurrently, so dispatches with no Vulkan barrier between them
+// may overlap. Vulkan already allows that; barriers between dispatches are memory barriers inside the encoder (C2)
+// or end it. MoltenVK's internal compute work keeps serial encoders. MVK_PERF_CONCURRENT_DISPATCH=0 disables.
+static bool perfConcurrentDispatch() {
+	static const bool on = [] {
+		const char* s = getenv("MVK_PERF_CONCURRENT_DISPATCH");
+		bool v = !s || atoi(s) != 0;
+		fprintf(stderr, "[mvk-perf] C3 concurrent dispatch for vkCmdDispatch: %s\n", v ? "on" : "off");
+		return v;
+	}();
+	return on;
+}
+
 static MTLDispatchType getDispatchType(MVKCommandUse use) {
 	switch (use) {
+		case kMVKCommandUseDispatch:
+			return perfConcurrentDispatch() ? MTLDispatchTypeConcurrent : MTLDispatchTypeSerial;
 		case kMVKCommandUseAccumOcclusionQuery:
 			return MTLDispatchTypeConcurrent;
 		default:
