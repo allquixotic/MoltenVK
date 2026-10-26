@@ -1091,9 +1091,20 @@ bool MVKCommandEncoder::perfTryInlineComputeBarrier(uint64_t sourceStageMask, ui
 		fprintf(stderr, "[mvk-perf] C2 compute-to-compute barriers inside the compute encoder: %s\n", on ? "on" : "off");
 		return on;
 	}();
+	// C2-wide: the destination may also be draws (vertex/fragment, including DRAW_INDIRECT) or copies. Those
+	// consumers can only run in later render or blit encoders, which wait for the fence this encoder updates when
+	// it ends (the deferred setBarrier below), exactly as if the encoder had ended here. Compute consumers in this
+	// encoder are ordered by the memory barrier. The source must still be compute only: earlier copy or render
+	// work isn't in this encoder. MVK_PERF_C2_WIDE=0 restricts C2 to compute -> compute again.
+	static const bool wide = [] {
+		const char* s = getenv("MVK_PERF_C2_WIDE");
+		bool on = !s || atoi(s) != 0;
+		fprintf(stderr, "[mvk-perf] C2-wide (compute -> any stage barriers inside the compute encoder): %s\n", on ? "on" : "off");
+		return on;
+	}();
 	const uint64_t computeOnly = 1ull << kMVKBarrierStageCompute;
 	if ( !enabled || !_mtlComputeEncoder || _mtlRenderEncoder || _mtlBlitEncoder ||
-		sourceStageMask != computeOnly || destStageMask != computeOnly ) { return false; }
+		sourceStageMask != computeOnly || (destStageMask != computeOnly && !wide) ) { return false; }
 
 	// Serial dispatch already orders the dispatches; the memory barrier makes earlier writes visible.
 	[_mtlComputeEncoder memoryBarrierWithScope: MTLBarrierScopeBuffers | MTLBarrierScopeTextures];
