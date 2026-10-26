@@ -224,7 +224,7 @@ void MVKCmdDraw::encode(MVKCommandEncoder* cmdEncoder) {
             case kMVKGraphicsStageVertex: {
                 mtlTessCtlEncoder = cmdEncoder->getMTLComputeEncoder(kMVKCommandUseTessellationVertexTessCtl);
                 if (pipeline->needsVertexOutputBuffer()) {
-                    vtxOutBuff = cmdEncoder->getTempMTLBuffer(_vertexCount * _instanceCount * 4 * dvcLimits.maxVertexOutputComponents, true);
+                    vtxOutBuff = cmdEncoder->getTempMTLBuffer(_vertexCount * _instanceCount * pipeline->getTessVertexOutputStride(4 * dvcLimits.maxVertexOutputComponents), true);
                     [mtlTessCtlEncoder setBuffer: vtxOutBuff->_mtlBuffer
                                           offset: vtxOutBuff->_offset
                                          atIndex: pipeline->getImplicitBuffers(kMVKShaderStageVertex).ids[MVKImplicitBuffer::Output]];
@@ -251,13 +251,13 @@ void MVKCmdDraw::encode(MVKCommandEncoder* cmdEncoder) {
             case kMVKGraphicsStageTessControl: {
                 mtlTessCtlEncoder = cmdEncoder->getMTLComputeEncoder(kMVKCommandUseTessellationVertexTessCtl);
                 if (pipeline->needsTessCtlOutputBuffer()) {
-                    tcOutBuff = cmdEncoder->getTempMTLBuffer(outControlPointCount * tessParams.patchCount * 4 * dvcLimits.maxTessellationControlPerVertexOutputComponents, true);
+                    tcOutBuff = cmdEncoder->getTempMTLBuffer(outControlPointCount * tessParams.patchCount * pipeline->getTessCtlOutputStride(4 * dvcLimits.maxTessellationControlPerVertexOutputComponents), true);
                     [mtlTessCtlEncoder setBuffer: tcOutBuff->_mtlBuffer
                                           offset: tcOutBuff->_offset
                                          atIndex: pipeline->getImplicitBuffers(kMVKShaderStageTessCtl).ids[MVKImplicitBuffer::Output]];
                 }
                 if (pipeline->needsTessCtlPatchOutputBuffer()) {
-                    tcPatchOutBuff = cmdEncoder->getTempMTLBuffer(tessParams.patchCount * 4 * dvcLimits.maxTessellationControlPerPatchOutputComponents, true);
+                    tcPatchOutBuff = cmdEncoder->getTempMTLBuffer(tessParams.patchCount * pipeline->getTessCtlPatchOutputStride(4 * dvcLimits.maxTessellationControlPerPatchOutputComponents), true);
                     [mtlTessCtlEncoder setBuffer: tcPatchOutBuff->_mtlBuffer
                                           offset: tcPatchOutBuff->_offset
                                          atIndex: pipeline->getImplicitBuffers(kMVKShaderStageTessCtl).ids[MVKImplicitBuffer::PatchOutput]];
@@ -507,7 +507,7 @@ void MVKCmdDrawIndexed::encode(MVKCommandEncoder* cmdEncoder) {
             case kMVKGraphicsStageVertex: {
                 mtlTessCtlEncoder = cmdEncoder->getMTLComputeEncoder(kMVKCommandUseTessellationVertexTessCtl);
                 if (pipeline->needsVertexOutputBuffer()) {
-                    vtxOutBuff = cmdEncoder->getTempMTLBuffer(_indexCount * _instanceCount * 4 * dvcLimits.maxVertexOutputComponents, true);
+                    vtxOutBuff = cmdEncoder->getTempMTLBuffer(_indexCount * _instanceCount * pipeline->getTessVertexOutputStride(4 * dvcLimits.maxVertexOutputComponents), true);
                     [mtlTessCtlEncoder setBuffer: vtxOutBuff->_mtlBuffer
                                           offset: vtxOutBuff->_offset
                                          atIndex: pipeline->getImplicitBuffers(kMVKShaderStageVertex).ids[MVKImplicitBuffer::Output]];
@@ -537,13 +537,13 @@ void MVKCmdDrawIndexed::encode(MVKCommandEncoder* cmdEncoder) {
             case kMVKGraphicsStageTessControl: {
                 mtlTessCtlEncoder = cmdEncoder->getMTLComputeEncoder(kMVKCommandUseTessellationVertexTessCtl);
                 if (pipeline->needsTessCtlOutputBuffer()) {
-                    tcOutBuff = cmdEncoder->getTempMTLBuffer(outControlPointCount * tessParams.patchCount * 4 * dvcLimits.maxTessellationControlPerVertexOutputComponents, true);
+                    tcOutBuff = cmdEncoder->getTempMTLBuffer(outControlPointCount * tessParams.patchCount * pipeline->getTessCtlOutputStride(4 * dvcLimits.maxTessellationControlPerVertexOutputComponents), true);
                     [mtlTessCtlEncoder setBuffer: tcOutBuff->_mtlBuffer
                                           offset: tcOutBuff->_offset
                                          atIndex: pipeline->getImplicitBuffers(kMVKShaderStageTessCtl).ids[MVKImplicitBuffer::Output]];
                 }
                 if (pipeline->needsTessCtlPatchOutputBuffer()) {
-                    tcPatchOutBuff = cmdEncoder->getTempMTLBuffer(tessParams.patchCount * 4 * dvcLimits.maxTessellationControlPerPatchOutputComponents, true);
+                    tcPatchOutBuff = cmdEncoder->getTempMTLBuffer(tessParams.patchCount * pipeline->getTessCtlPatchOutputStride(4 * dvcLimits.maxTessellationControlPerPatchOutputComponents), true);
                     [mtlTessCtlEncoder setBuffer: tcPatchOutBuff->_mtlBuffer
                                           offset: tcPatchOutBuff->_offset
                                          atIndex: pipeline->getImplicitBuffers(kMVKShaderStageTessCtl).ids[MVKImplicitBuffer::PatchOutput]];
@@ -946,13 +946,13 @@ void MVKCmdDrawIndirect::encode(MVKCommandEncoder* cmdEncoder) {
 		tcParamsBuff = cmdEncoder->getTempMTLBuffer(paramsSize, true);
         mtlParmBuffOfst = tcParamsBuff->_offset;
         if (pipeline->needsVertexOutputBuffer()) {
-            vtxOutBuff = cmdEncoder->getTempMTLBuffer(vertexCount * 4 * dvcLimits.maxVertexOutputComponents, true);
+            vtxOutBuff = cmdEncoder->getTempMTLBuffer(vertexCount * pipeline->getTessVertexOutputStride(4 * dvcLimits.maxVertexOutputComponents), true);
         }
         if (pipeline->needsTessCtlOutputBuffer()) {
-            tcOutBuff = cmdEncoder->getTempMTLBuffer(outControlPointCount * patchCount * 4 * dvcLimits.maxTessellationControlPerVertexOutputComponents, true);
+            tcOutBuff = cmdEncoder->getTempMTLBuffer(outControlPointCount * patchCount * pipeline->getTessCtlOutputStride(4 * dvcLimits.maxTessellationControlPerVertexOutputComponents), true);
         }
         if (pipeline->needsTessCtlPatchOutputBuffer()) {
-            tcPatchOutBuff = cmdEncoder->getTempMTLBuffer(patchCount * 4 * dvcLimits.maxTessellationControlPerPatchOutputComponents, true);
+            tcPatchOutBuff = cmdEncoder->getTempMTLBuffer(patchCount * pipeline->getTessCtlPatchOutputStride(4 * dvcLimits.maxTessellationControlPerPatchOutputComponents), true);
         }
         tcLevelBuff = cmdEncoder->getTempMTLBuffer(patchCount * sizeof(MTLQuadTessellationFactorsHalf), true);
 
@@ -1316,13 +1316,13 @@ void MVKCmdDrawIndexedIndirect::encode(MVKCommandEncoder* cmdEncoder, const MVKI
         tcParamsBuff = cmdEncoder->getTempMTLBuffer(paramsSize, true);
         mtlParmBuffOfst = tcParamsBuff->_offset;
         if (pipeline->needsVertexOutputBuffer()) {
-            vtxOutBuff = cmdEncoder->getTempMTLBuffer(vertexCount * 4 * dvcLimits.maxVertexOutputComponents, true);
+            vtxOutBuff = cmdEncoder->getTempMTLBuffer(vertexCount * pipeline->getTessVertexOutputStride(4 * dvcLimits.maxVertexOutputComponents), true);
         }
         if (pipeline->needsTessCtlOutputBuffer()) {
-            tcOutBuff = cmdEncoder->getTempMTLBuffer(outControlPointCount * patchCount * 4 * dvcLimits.maxTessellationControlPerVertexOutputComponents, true);
+            tcOutBuff = cmdEncoder->getTempMTLBuffer(outControlPointCount * patchCount * pipeline->getTessCtlOutputStride(4 * dvcLimits.maxTessellationControlPerVertexOutputComponents), true);
         }
         if (pipeline->needsTessCtlPatchOutputBuffer()) {
-            tcPatchOutBuff = cmdEncoder->getTempMTLBuffer(patchCount * 4 * dvcLimits.maxTessellationControlPerPatchOutputComponents, true);
+            tcPatchOutBuff = cmdEncoder->getTempMTLBuffer(patchCount * pipeline->getTessCtlPatchOutputStride(4 * dvcLimits.maxTessellationControlPerPatchOutputComponents), true);
         }
         tcLevelBuff = cmdEncoder->getTempMTLBuffer(patchCount * sizeof(MTLQuadTessellationFactorsHalf), true);
         vtxIndexBuff = cmdEncoder->getTempMTLBuffer(ibb.size, true);
