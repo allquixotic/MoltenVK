@@ -820,7 +820,7 @@ VkResult MVKCmdDrawIndirect::setContent(MVKCommandBuffer* cmdBuff,
 	}
 	MVKBuffer* mvkCountBuffer = (MVKBuffer*)countBuffer;
 	_mtlCountBuffer = mvkCountBuffer->getMTLBuffer();
-	{ uint32_t appMax = _drawCount; _drawCount = mvkPerfICountCap(_drawCount); _perfCapped = _drawCount < appMax; }	// C4, C4d
+	// Keep the application limit; the adaptive cap is evaluated for each encoding.
 	_mtlCountBufferOffset = mvkCountBuffer->getMTLBufferOffset() + countBufferOffset;
 	return VK_SUCCESS;
 }
@@ -829,11 +829,11 @@ VkResult MVKCmdDrawIndirect::setContent(MVKCommandBuffer* cmdBuff,
 void MVKCmdDrawIndirect::encodeIndexedIndirect(MVKCommandEncoder* cmdEncoder,
 														 id<MTLBuffer> indirectBuffer,
 														 VkDeviceSize indirectBufferOffset,
-														 uint32_t indirectBufferStride) {
+														 uint32_t indirectBufferStride, uint32_t drawCount) {
 
 	// Create an indexed indirect buffer to be populated from the non-indexed indirect buffer.
 	uint32_t indirectIdxBuffStride = sizeof(MTLDrawIndexedPrimitivesIndirectArguments);
-	auto* indirectIdxBuff = cmdEncoder->getTempMTLBuffer(indirectIdxBuffStride * _drawCount, true);
+	auto* indirectIdxBuff = cmdEncoder->getTempMTLBuffer(indirectIdxBuffStride * drawCount, true);
 
 	// Create an index buffer to be populated with synthetic indexes.
 	MTLIndexType mtlIdxType = MTLIndexTypeUInt32;
@@ -853,13 +853,13 @@ void MVKCmdDrawIndirect::encodeIndexedIndirect(MVKCommandEncoder* cmdEncoder,
 	state.bindBuffer(mtlConvertEncoder, indirectBuffer,              indirectBufferOffset,      0);
 	state.bindBuffer(mtlConvertEncoder, indirectIdxBuff->_mtlBuffer, indirectIdxBuff->_offset, 1);
 	state.bindStructBytes(mtlConvertEncoder, &indirectBufferStride,     2);
-	state.bindStructBytes(mtlConvertEncoder, &_drawCount,               3);
+	state.bindStructBytes(mtlConvertEncoder, &drawCount,               3);
 	state.bindBuffer(mtlConvertEncoder, ibb.mtlBuffer, ibb.offset, 4);
 	if (cmdEncoder->getMetalFeatures().nonUniformThreadgroups) {
-		[mtlConvertEncoder dispatchThreads: MTLSizeMake(_drawCount, 1, 1)
+		[mtlConvertEncoder dispatchThreads: MTLSizeMake(drawCount, 1, 1)
 					 threadsPerThreadgroup: MTLSizeMake(mtlConvertState.threadExecutionWidth, 1, 1)];
 	} else {
-		[mtlConvertEncoder dispatchThreadgroups: MTLSizeMake(mvkCeilingDivide<NSUInteger>(_drawCount, mtlConvertState.threadExecutionWidth), 1, 1)
+		[mtlConvertEncoder dispatchThreadgroups: MTLSizeMake(mvkCeilingDivide<NSUInteger>(drawCount, mtlConvertState.threadExecutionWidth), 1, 1)
 						  threadsPerThreadgroup: MTLSizeMake(mtlConvertState.threadExecutionWidth, 1, 1)];
 	}
 	// Switch back to rendering now.
@@ -869,7 +869,7 @@ void MVKCmdDrawIndirect::encodeIndexedIndirect(MVKCommandEncoder* cmdEncoder,
 	diiCmd.setContent(cmdEncoder->_cmdBuffer,
 					  indirectIdxBuff->_mtlBuffer,
 					  indirectIdxBuff->_offset,
-					  _drawCount,
+					  drawCount,
 					  indirectIdxBuffStride);
 	diiCmd.encode(cmdEncoder, ibb);
 }
@@ -878,20 +878,22 @@ void MVKCmdDrawIndirect::encodeIndexedIndirect(MVKCommandEncoder* cmdEncoder,
 // draw doesn't have to end and restart the Metal render pass for its own compute dispatch.
 void MVKCmdDrawIndirect::perfHoistIndirectCount(MVKCommandEncoder* cmdEncoder) {
 	if ( !_mtlCountBuffer || _drawCount == 0 ) { return; }
+	const uint32_t drawCount = mvkPerfICountCap(_drawCount);
 	cmdEncoder->perfAddHoistedIndirect(this, encodeIndirectCountConversion(cmdEncoder, _mtlIndirectBuffer, _mtlIndirectBufferOffset,
 																		 _mtlIndirectBufferStride, _mtlCountBuffer, _mtlCountBufferOffset,
-																		 _drawCount, _perfCapped, false, false));
+																		 drawCount, drawCount < _drawCount, false, false), drawCount);
 }
 
 void MVKCmdDrawIndirect::encode(MVKCommandEncoder* cmdEncoder) {
+	uint32_t drawCount = _mtlCountBuffer ? mvkPerfICountCap(_drawCount) : _drawCount;
 
 	cmdEncoder->restartMetalRenderPassIfNeeded();
 	id<MTLBuffer> indirectBuffer = _mtlIndirectBuffer;
 	VkDeviceSize indirectBufferOffset = _mtlIndirectBufferOffset;
 	uint32_t indirectBufferStride = _mtlIndirectBufferStride;
 
-	if (_mtlCountBuffer && _drawCount > 0) {
-		auto* convertedBuffer = cmdEncoder->perfTakeHoistedIndirect(this);	// C10: converted before the render pass
+	if (_mtlCountBuffer && drawCount > 0) {
+		auto* convertedBuffer = cmdEncoder->perfTakeHoistedIndirect(this, drawCount);	// C10: converted before the render pass
 		if ( !convertedBuffer ) {
 			convertedBuffer = encodeIndirectCountConversion(cmdEncoder,
 				indirectBuffer,
@@ -899,8 +901,8 @@ void MVKCmdDrawIndirect::encode(MVKCommandEncoder* cmdEncoder) {
 				indirectBufferStride,
 				_mtlCountBuffer,
 				_mtlCountBufferOffset,
-				_drawCount,
-				_perfCapped,
+				drawCount,
+				drawCount < _drawCount,
 				false);
 		}
 		indirectBuffer = convertedBuffer->_mtlBuffer;
@@ -913,7 +915,7 @@ void MVKCmdDrawIndirect::encode(MVKCommandEncoder* cmdEncoder) {
 	auto& dvcLimits = cmdEncoder->getDeviceProperties().limits;
 	// Metal doesn't support triangle fans, so encode it as indexed indirect triangles instead.
 	if (pipeline->getVkPrimitiveTopology() == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN) {
-		encodeIndexedIndirect(cmdEncoder, indirectBuffer, indirectBufferOffset, indirectBufferStride);
+		encodeIndexedIndirect(cmdEncoder, indirectBuffer, indirectBufferOffset, indirectBufferStride, drawCount);
 		return;
 	}
 
@@ -922,7 +924,7 @@ void MVKCmdDrawIndirect::encode(MVKCommandEncoder* cmdEncoder) {
 			indirectBuffer,
 			indirectBufferOffset,
 			indirectBufferStride,
-			_drawCount,
+			drawCount,
 			false);
 
     cmdEncoder->_isIndexedDraw = false;
@@ -959,9 +961,9 @@ void MVKCmdDrawIndirect::encode(MVKCommandEncoder* cmdEncoder) {
         outControlPointCount = pipeline->getOutputControlPointCount();
         vertexCount = mvkPerfTessIndirectVerts();	// C7: was kMVKMaxDrawIndirectVertexCount
         patchCount = mvkCeilingDivide(vertexCount, inControlPointCount);
-        VkDeviceSize indirectSize = (2 * sizeof(MTLDispatchThreadgroupsIndirectArguments) + sizeof(MTLDrawPatchIndirectArguments) + sizeof(MTLStageInRegionIndirectArguments)) * _drawCount;
+        VkDeviceSize indirectSize = (2 * sizeof(MTLDispatchThreadgroupsIndirectArguments) + sizeof(MTLDrawPatchIndirectArguments) + sizeof(MTLStageInRegionIndirectArguments)) * drawCount;
 		paramsIncr = std::max((size_t)dvcLimits.minUniformBufferOffsetAlignment, sizeof(uint32_t) * 2);
-		VkDeviceSize paramsSize = paramsIncr * _drawCount;
+		VkDeviceSize paramsSize = paramsIncr * drawCount;
         tempIndirectBuff = cmdEncoder->getTempMTLBuffer(indirectSize, true);
         mtlIndBuff = tempIndirectBuff->_mtlBuffer;
         mtlIndBuffOfst = tempIndirectBuff->_offset;
@@ -987,7 +989,7 @@ void MVKCmdDrawIndirect::encode(MVKCommandEncoder* cmdEncoder) {
         }
     } else if (needsInstanceAdjustment) {
         // In this case, we need to adjust the instance count for the views being drawn.
-        VkDeviceSize indirectSize = sizeof(MTLDrawPrimitivesIndirectArguments) * _drawCount;
+        VkDeviceSize indirectSize = sizeof(MTLDrawPrimitivesIndirectArguments) * drawCount;
         tempIndirectBuff = cmdEncoder->getTempMTLBuffer(indirectSize, true);
         mtlIndBuff = tempIndirectBuff->_mtlBuffer;
         mtlIndBuffOfst = tempIndirectBuff->_offset;
@@ -997,14 +999,14 @@ void MVKCmdDrawIndirect::encode(MVKCommandEncoder* cmdEncoder) {
     pipeline->getStages(stages);
 
     if (pipeline->needsDrawIdBuffer()) {
-        tempDrawIDBuff = cmdEncoder->getTempMTLBuffer(_drawCount * sizeof(uint32_t));
+        tempDrawIDBuff = cmdEncoder->getTempMTLBuffer(drawCount * sizeof(uint32_t));
 
         auto* drawIDs = (uint32_t*)((char*)[tempDrawIDBuff->_mtlBuffer contents] + tempDrawIDBuff->_offset);
-        for (uint32_t i = 0; i < _drawCount; i++) {
+        for (uint32_t i = 0; i < drawCount; i++) {
             drawIDs[i] = i;
         }
     }
-    for (uint32_t drawIdx = 0; drawIdx < _drawCount; drawIdx++) {
+    for (uint32_t drawIdx = 0; drawIdx < drawCount; drawIdx++) {
         for (uint32_t s : stages) {
             auto stage = MVKGraphicsStage(s);
             id<MTLComputeCommandEncoder> mtlTessCtlEncoder = nil;
@@ -1024,7 +1026,7 @@ void MVKCmdDrawIndirect::encode(MVKCommandEncoder* cmdEncoder) {
 				state.bindStructBytes(mtlTessCtlEncoder, &indirectBufferStride,     3);
 				state.bindStructBytes(mtlTessCtlEncoder, &inControlPointCount,      4);
 				state.bindStructBytes(mtlTessCtlEncoder, &outControlPointCount,     5);
-				state.bindStructBytes(mtlTessCtlEncoder, &_drawCount,               6);
+				state.bindStructBytes(mtlTessCtlEncoder, &drawCount,               6);
 				state.bindStructBytes(mtlTessCtlEncoder, &vtxThreadExecWidth,       7);
 				state.bindStructBytes(mtlTessCtlEncoder, &tcWorkgroupSize,          8);
 				id<MTLBuffer> tessStats = mvkPerfTessStatsBuffer(cmdEncoder->getMTLDevice());
@@ -1032,10 +1034,10 @@ void MVKCmdDrawIndirect::encode(MVKCommandEncoder* cmdEncoder) {
 				state.bindStructBytes(mtlTessCtlEncoder, &vertexCount,              10);
 				[cmdEncoder->_mtlCmdBuffer addCompletedHandler: ^(id<MTLCommandBuffer> mcb) { mvkPerfTessReport(tessStats); }];
 				if (mtlFeats.nonUniformThreadgroups) {
-					[mtlTessCtlEncoder dispatchThreads: MTLSizeMake(_drawCount, 1, 1)
+					[mtlTessCtlEncoder dispatchThreads: MTLSizeMake(drawCount, 1, 1)
 								 threadsPerThreadgroup: MTLSizeMake(mtlConvertState.threadExecutionWidth, 1, 1)];
 				} else {
-					[mtlTessCtlEncoder dispatchThreadgroups: MTLSizeMake(mvkCeilingDivide<NSUInteger>(_drawCount, mtlConvertState.threadExecutionWidth), 1, 1)
+					[mtlTessCtlEncoder dispatchThreadgroups: MTLSizeMake(mvkCeilingDivide<NSUInteger>(drawCount, mtlConvertState.threadExecutionWidth), 1, 1)
 									  threadsPerThreadgroup: MTLSizeMake(mtlConvertState.threadExecutionWidth, 1, 1)];
 				}
             } else if (drawIdx == 0 && needsInstanceAdjustment) {
@@ -1051,13 +1053,13 @@ void MVKCmdDrawIndirect::encode(MVKCommandEncoder* cmdEncoder) {
 				state.bindBuffer(mtlConvertEncoder, indirectBuffer,                indirectBufferOffset,      0);
 				state.bindBuffer(mtlConvertEncoder, tempIndirectBuff->_mtlBuffer, tempIndirectBuff->_offset, 1);
 				state.bindStructBytes(mtlConvertEncoder, &indirectBufferStride,     2);
-				state.bindStructBytes(mtlConvertEncoder, &_drawCount,               3);
+				state.bindStructBytes(mtlConvertEncoder, &drawCount,               3);
 				state.bindStructBytes(mtlConvertEncoder, &viewCount,                4);
                 if (mtlFeats.nonUniformThreadgroups) {
-					[mtlConvertEncoder dispatchThreads: MTLSizeMake(_drawCount, 1, 1)
+					[mtlConvertEncoder dispatchThreads: MTLSizeMake(drawCount, 1, 1)
 					             threadsPerThreadgroup: MTLSizeMake(mtlConvertState.threadExecutionWidth, 1, 1)];
                 } else {
-                    [mtlConvertEncoder dispatchThreadgroups: MTLSizeMake(mvkCeilingDivide<NSUInteger>(_drawCount, mtlConvertState.threadExecutionWidth), 1, 1)
+                    [mtlConvertEncoder dispatchThreadgroups: MTLSizeMake(mvkCeilingDivide<NSUInteger>(drawCount, mtlConvertState.threadExecutionWidth), 1, 1)
                                       threadsPerThreadgroup: MTLSizeMake(mtlConvertState.threadExecutionWidth, 1, 1)];
                 }
                 // Switch back to rendering now, since we don't have compute stages to run anyway.
@@ -1236,7 +1238,7 @@ VkResult MVKCmdDrawIndexedIndirect::setContent(MVKCommandBuffer* cmdBuff,
 	}
 	MVKBuffer* mvkCountBuffer = (MVKBuffer*)countBuffer;
 	_mtlCountBuffer = mvkCountBuffer->getMTLBuffer();
-	{ uint32_t appMax = _drawCount; _drawCount = mvkPerfICountCap(_drawCount); _perfCapped = _drawCount < appMax; }	// C4, C4d
+	// Keep the application limit; the adaptive cap is evaluated for each encoding.
 	_mtlCountBufferOffset = mvkCountBuffer->getMTLBufferOffset() + countBufferOffset;
 	return VK_SUCCESS;
 }
@@ -1244,9 +1246,10 @@ VkResult MVKCmdDrawIndexedIndirect::setContent(MVKCommandBuffer* cmdBuff,
 // Enshrouded perf test (C10): as MVKCmdDrawIndirect::perfHoistIndirectCount().
 void MVKCmdDrawIndexedIndirect::perfHoistIndirectCount(MVKCommandEncoder* cmdEncoder) {
 	if ( !_mtlCountBuffer || _drawCount == 0 ) { return; }
+	const uint32_t drawCount = mvkPerfICountCap(_drawCount);
 	cmdEncoder->perfAddHoistedIndirect(this, encodeIndirectCountConversion(cmdEncoder, _mtlIndirectBuffer, _mtlIndirectBufferOffset,
 																		 _mtlIndirectBufferStride, _mtlCountBuffer, _mtlCountBufferOffset,
-																		 _drawCount, _perfCapped, true, false));
+																		 drawCount, drawCount < _drawCount, true, false), drawCount);
 }
 
 void MVKCmdDrawIndexedIndirect::encode(MVKCommandEncoder* cmdEncoder) {
@@ -1255,12 +1258,13 @@ void MVKCmdDrawIndexedIndirect::encode(MVKCommandEncoder* cmdEncoder) {
 }
 
 void MVKCmdDrawIndexedIndirect::encode(MVKCommandEncoder* cmdEncoder, const MVKIndexMTLBufferBinding& ibbOrig) {
+	uint32_t drawCount = _mtlCountBuffer ? mvkPerfICountCap(_drawCount) : _drawCount;
 
 	id<MTLBuffer> indirectBuffer = _mtlIndirectBuffer;
 	VkDeviceSize indirectBufferOffset = _mtlIndirectBufferOffset;
 	uint32_t indirectBufferStride = _mtlIndirectBufferStride;
-	if (_mtlCountBuffer && _drawCount > 0) {
-		auto* convertedBuffer = cmdEncoder->perfTakeHoistedIndirect(this);	// C10: converted before the render pass
+	if (_mtlCountBuffer && drawCount > 0) {
+		auto* convertedBuffer = cmdEncoder->perfTakeHoistedIndirect(this, drawCount);	// C10: converted before the render pass
 		if ( !convertedBuffer ) {
 			convertedBuffer = encodeIndirectCountConversion(cmdEncoder,
 				indirectBuffer,
@@ -1268,8 +1272,8 @@ void MVKCmdDrawIndexedIndirect::encode(MVKCommandEncoder* cmdEncoder, const MVKI
 				indirectBufferStride,
 				_mtlCountBuffer,
 				_mtlCountBufferOffset,
-				_drawCount,
-				_perfCapped,
+				drawCount,
+				drawCount < _drawCount,
 				true);
 		}
 		indirectBuffer = convertedBuffer->_mtlBuffer;
@@ -1295,7 +1299,7 @@ void MVKCmdDrawIndexedIndirect::encode(MVKCommandEncoder* cmdEncoder, const MVKI
 			indirectBuffer,
 			indirectBufferOffset,
 			indirectBufferStride,
-			_drawCount,
+			drawCount,
 			true);
 
 	MVKVertexAdjustments vtxAdjmts{};
@@ -1342,9 +1346,9 @@ void MVKCmdDrawIndexedIndirect::encode(MVKCommandEncoder* cmdEncoder, const MVKI
         outControlPointCount = pipeline->getOutputControlPointCount();
         vertexCount = mvkPerfTessIndirectVerts();	// C7: was kMVKMaxDrawIndirectVertexCount
         patchCount = mvkCeilingDivide(vertexCount, inControlPointCount);
-        VkDeviceSize indirectSize = (sizeof(MTLDispatchThreadgroupsIndirectArguments) + sizeof(MTLDrawPatchIndirectArguments) + sizeof(MTLStageInRegionIndirectArguments)) * _drawCount;
+        VkDeviceSize indirectSize = (sizeof(MTLDispatchThreadgroupsIndirectArguments) + sizeof(MTLDrawPatchIndirectArguments) + sizeof(MTLStageInRegionIndirectArguments)) * drawCount;
 		paramsIncr = std::max((size_t)dvcLimits.minUniformBufferOffsetAlignment, sizeof(uint32_t) * 2);
-		VkDeviceSize paramsSize = paramsIncr * _drawCount;
+		VkDeviceSize paramsSize = paramsIncr * drawCount;
         tempIndirectBuff = cmdEncoder->getTempMTLBuffer(indirectSize, true);
         mtlIndBuff = tempIndirectBuff->_mtlBuffer;
         mtlTempIndBuffOfst = tempIndirectBuff->_offset;
@@ -1374,7 +1378,7 @@ void MVKCmdDrawIndexedIndirect::encode(MVKCommandEncoder* cmdEncoder, const MVKI
         }
     } else if (vtxAdjmts.needsAdjustment()) {
         // In this case, we need to adjust the instance count for the views being drawn.
-        VkDeviceSize indirectSize = sizeof(MTLDrawIndexedPrimitivesIndirectArguments) * _drawCount;
+        VkDeviceSize indirectSize = sizeof(MTLDrawIndexedPrimitivesIndirectArguments) * drawCount;
         tempIndirectBuff = cmdEncoder->getTempMTLBuffer(indirectSize, true);
         mtlIndBuff = tempIndirectBuff->_mtlBuffer;
         mtlTempIndBuffOfst = tempIndirectBuff->_offset;
@@ -1389,14 +1393,14 @@ void MVKCmdDrawIndexedIndirect::encode(MVKCommandEncoder* cmdEncoder, const MVKI
     pipeline->getStages(stages);
 
     if (pipeline->needsDrawIdBuffer()) {
-        tempDrawIDBuff = cmdEncoder->getTempMTLBuffer(_drawCount * sizeof(uint32_t));
+        tempDrawIDBuff = cmdEncoder->getTempMTLBuffer(drawCount * sizeof(uint32_t));
 
         auto* drawIDs = (uint32_t*)((char*)[tempDrawIDBuff->_mtlBuffer contents] + tempDrawIDBuff->_offset);
-        for (uint32_t i = 0; i < _drawCount; i++) {
+        for (uint32_t i = 0; i < drawCount; i++) {
             drawIDs[i] = i;
         }
     }
-    for (uint32_t drawIdx = 0; drawIdx < _drawCount; drawIdx++) {
+    for (uint32_t drawIdx = 0; drawIdx < drawCount; drawIdx++) {
         for (uint32_t s : stages) {
             auto stage = MVKGraphicsStage(s);
             id<MTLComputeCommandEncoder> mtlTessCtlEncoder = nil;
@@ -1417,14 +1421,14 @@ void MVKCmdDrawIndexedIndirect::encode(MVKCommandEncoder* cmdEncoder, const MVKI
                     state.bindStructBytes(mtlTessCtlEncoder, &indirectBufferStride,     3);
                     state.bindStructBytes(mtlTessCtlEncoder, &inControlPointCount,      4);
                     state.bindStructBytes(mtlTessCtlEncoder, &outControlPointCount,     5);
-                    state.bindStructBytes(mtlTessCtlEncoder, &_drawCount,               6);
+                    state.bindStructBytes(mtlTessCtlEncoder, &drawCount,               6);
                     state.bindStructBytes(mtlTessCtlEncoder, &vtxThreadExecWidth,       7);
                     state.bindStructBytes(mtlTessCtlEncoder, &tcWorkgroupSize,          8);
                     id<MTLBuffer> tessStats = mvkPerfTessStatsBuffer(cmdEncoder->getMTLDevice());
                     state.bindBuffer(mtlTessCtlEncoder, tessStats,                    0,                         9);
                     state.bindStructBytes(mtlTessCtlEncoder, &vertexCount,              10);
                     [cmdEncoder->_mtlCmdBuffer addCompletedHandler: ^(id<MTLCommandBuffer> mcb) { mvkPerfTessReport(tessStats); }];
-                    [mtlTessCtlEncoder dispatchThreadgroups: MTLSizeMake(mvkCeilingDivide<NSUInteger>(_drawCount, mtlConvertState.threadExecutionWidth), 1, 1)
+                    [mtlTessCtlEncoder dispatchThreadgroups: MTLSizeMake(mvkCeilingDivide<NSUInteger>(drawCount, mtlConvertState.threadExecutionWidth), 1, 1)
                                       threadsPerThreadgroup: MTLSizeMake(mtlConvertState.threadExecutionWidth, 1, 1)];
                 }
                 // We actually need to make a copy of the index buffer, because there's no way to tell Metal to
@@ -1452,16 +1456,16 @@ void MVKCmdDrawIndexedIndirect::encode(MVKCommandEncoder* cmdEncoder, const MVKI
 				state.bindBuffer(mtlConvertEncoder, indirectBuffer,                indirectBufferOffset,      0);
 				state.bindBuffer(mtlConvertEncoder, tempIndirectBuff->_mtlBuffer, tempIndirectBuff->_offset, 1);
 				state.bindStructBytes(mtlConvertEncoder, &indirectBufferStride,     2);
-				state.bindStructBytes(mtlConvertEncoder, &_drawCount,               3);
+				state.bindStructBytes(mtlConvertEncoder, &drawCount,               3);
 				state.bindStructBytes(mtlConvertEncoder, &viewCount,                4);
 				state.bindStructBytes(mtlConvertEncoder, &vtxAdjmts,                5);
 				state.bindBuffer(mtlConvertEncoder, ibb.mtlBuffer,       ibb.offset,       6);
 				state.bindBuffer(mtlConvertEncoder, ibbTriFan.mtlBuffer, ibbTriFan.offset, 7);
 				if (mtlFeats.nonUniformThreadgroups) {
-					[mtlConvertEncoder dispatchThreads: MTLSizeMake(_drawCount, 1, 1)
+					[mtlConvertEncoder dispatchThreads: MTLSizeMake(drawCount, 1, 1)
 								 threadsPerThreadgroup: MTLSizeMake(mtlConvertState.threadExecutionWidth, 1, 1)];
 				} else {
-					[mtlConvertEncoder dispatchThreadgroups: MTLSizeMake(mvkCeilingDivide<NSUInteger>(_drawCount, mtlConvertState.threadExecutionWidth), 1, 1)
+					[mtlConvertEncoder dispatchThreadgroups: MTLSizeMake(mvkCeilingDivide<NSUInteger>(drawCount, mtlConvertState.threadExecutionWidth), 1, 1)
 									  threadsPerThreadgroup: MTLSizeMake(mtlConvertState.threadExecutionWidth, 1, 1)];
 				}
 				// Switch back to rendering now, since we don't have compute stages to run anyway.

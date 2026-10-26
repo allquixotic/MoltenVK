@@ -169,7 +169,7 @@ protected:
 	void encodeIndexedIndirect(MVKCommandEncoder* cmdEncoder,
 								 id<MTLBuffer> indirectBuffer,
 								 VkDeviceSize indirectBufferOffset,
-								 uint32_t indirectBufferStride);
+								 uint32_t indirectBufferStride, uint32_t drawCount);
 
 	id<MTLBuffer> _mtlIndirectBuffer;
 	VkDeviceSize _mtlIndirectBufferOffset;
@@ -177,7 +177,6 @@ protected:
 	uint32_t _drawCount;
 	id<MTLBuffer> _mtlCountBuffer;
 	VkDeviceSize _mtlCountBufferOffset;
-	bool _perfCapped = false;	// C4d: the C4 cap lowered _drawCount below the app's maxDrawCount
 };
 
 
@@ -220,5 +219,4 @@ protected:
 	uint32_t _drawCount;
 	id<MTLBuffer> _mtlCountBuffer;
 	VkDeviceSize _mtlCountBufferOffset;
-	bool _perfCapped = false;	// C4d: the C4 cap lowered _drawCount below the app's maxDrawCount
 };

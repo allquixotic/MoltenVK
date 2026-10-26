@@ -193,7 +193,8 @@ void MVKCmdPipelineBarrier<N>::encode(MVKCommandEncoder* cmdEncoder) {
 		cmdEncoder->endCurrentMetalEncoding();
 
 		for (auto& b : _barriers) {
-			uint64_t sourceStageMask = mvkBarrierStagesFromPipelineStageFlags(b.srcStageMask), destStageMask = mvkBarrierStagesFromPipelineStageFlags(b.dstStageMask);
+			uint64_t sourceStageMask = mvkBarrierStagesFromPipelineStageFlags(b.srcStageMask & ~VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT);
+			uint64_t destStageMask = mvkBarrierStagesFromPipelineStageFlags(b.dstStageMask & ~VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
 			cmdEncoder->setBarrier(sourceStageMask, destStageMask);
 		}
 	}
