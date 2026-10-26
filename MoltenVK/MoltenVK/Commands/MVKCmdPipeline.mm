@@ -167,8 +167,10 @@ void MVKCmdPipelineBarrier<N>::encode(MVKCommandEncoder* cmdEncoder) {
 		uint64_t srcStages = 0, dstStages = 0;
 		bool touchesHost = false;
 		for (auto& b : _barriers) {
-			srcStages |= mvkBarrierStagesFromPipelineStageFlags(b.srcStageMask);
-			dstStages |= mvkBarrierStagesFromPipelineStageFlags(b.dstStageMask);
+			// TOP_OF_PIPE in the first scope and BOTTOM_OF_PIPE in the second are equivalent to NONE (Vulkan spec),
+			// but MoltenVK maps them to every stage. Enshrouded adds them to almost every compute barrier.
+			srcStages |= mvkBarrierStagesFromPipelineStageFlags(b.srcStageMask & ~VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT);
+			dstStages |= mvkBarrierStagesFromPipelineStageFlags(b.dstStageMask & ~VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
 			touchesHost |= mvkIsAnyFlagEnabled(b.srcStageMask | b.dstStageMask, VK_PIPELINE_STAGE_HOST_BIT);
 		}
 		keptInComputeEncoder = !_barriers.empty() && !touchesHost && cmdEncoder->perfTryInlineComputeBarrier(srcStages, dstStages);
