@@ -253,6 +253,27 @@ void MVKShaderLibrary::compileLibrary(const string& msl,
 		nsSrc = optSrc;
 	}
 
+	// Enshrouded perf C15: SPIRV-Cross writes transcendental functions as precise::powr, precise::log2 etc.
+	// when the SPIR-V asks to preserve NaN/Inf/signed zero, and the explicit precise:: namespace keeps them
+	// exact even when the shader is compiled with fast math. The game's heaviest compute kernels call
+	// hundreds of them (Phase 5b census). With MVK_PERF_FAST_TRANSCENDENTALS=1 they use the fast:: versions
+	// instead (vertex shaders are left alone, as above). Off by default until checked visually.
+	static const bool fastTranscendentals = [] {
+		const char* s = getenv("MVK_PERF_FAST_TRANSCENDENTALS");
+		bool on = s && atoi(s) != 0;
+		if (on) { fprintf(stderr, "[mvk-perf] C15 fast transcendentals on (non-vertex shaders)\n"); }
+		return on;
+	}();
+	if (fastTranscendentals && [nsSrc containsString: @"precise::"] && ![nsSrc containsString: @"\nvertex "]) {
+		static NSRegularExpression* re = [[NSRegularExpression alloc]
+			initWithPattern: @"\\bprecise::(powr|pow|log2|log10|log|exp2|exp10|exp|sqrt|rsqrt|sin|cos|tan|asin|acos|atan2|atan|sinh|cosh|tanh|divide)\\("
+					options: 0 error: nil];
+		NSMutableString* fastSrc = [nsSrc mutableCopy];
+		[re replaceMatchesInString: fastSrc options: 0 range: NSMakeRange(0, fastSrc.length) withTemplate: @"fast::$1("];
+		[nsSrc release];
+		nsSrc = fastSrc;
+	}
+
 	// If specialization macro is used, translate the id to macro information and pass it to compiler
 	vector<pair<MSLSpecializationMacroInfo, MVKShaderMacroValue>> macro_def;
 	if (specializationMacroDef) {
