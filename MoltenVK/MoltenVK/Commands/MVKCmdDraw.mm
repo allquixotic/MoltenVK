@@ -23,6 +23,7 @@
 #include "MVKPipeline.h"
 #include "MVKFoundation.h"
 #include "mvk_datatypes.hpp"
+#include "../GPUObjects/MVKPerfTess.h"
 
 
 #pragma mark -
@@ -934,7 +935,7 @@ void MVKCmdDrawIndirect::encode(MVKCommandEncoder* cmdEncoder) {
         // But not too many, or we'll exhaust available VRAM.
         inControlPointCount = cmdEncoder->getVkGraphics().getPatchControlPoints();
         outControlPointCount = pipeline->getOutputControlPointCount();
-        vertexCount = kMVKMaxDrawIndirectVertexCount;
+        vertexCount = mvkPerfTessIndirectVerts();	// C7: was kMVKMaxDrawIndirectVertexCount
         patchCount = mvkCeilingDivide(vertexCount, inControlPointCount);
         VkDeviceSize indirectSize = (2 * sizeof(MTLDispatchThreadgroupsIndirectArguments) + sizeof(MTLDrawPatchIndirectArguments) + sizeof(MTLStageInRegionIndirectArguments)) * _drawCount;
 		paramsIncr = std::max((size_t)dvcLimits.minUniformBufferOffsetAlignment, sizeof(uint32_t) * 2);
@@ -1004,6 +1005,10 @@ void MVKCmdDrawIndirect::encode(MVKCommandEncoder* cmdEncoder) {
 				state.bindStructBytes(mtlTessCtlEncoder, &_drawCount,               6);
 				state.bindStructBytes(mtlTessCtlEncoder, &vtxThreadExecWidth,       7);
 				state.bindStructBytes(mtlTessCtlEncoder, &tcWorkgroupSize,          8);
+				id<MTLBuffer> tessStats = mvkPerfTessStatsBuffer(cmdEncoder->getMTLDevice());
+				state.bindBuffer(mtlTessCtlEncoder, tessStats,                    0,                         9);
+				state.bindStructBytes(mtlTessCtlEncoder, &vertexCount,              10);
+				[cmdEncoder->_mtlCmdBuffer addCompletedHandler: ^(id<MTLCommandBuffer> mcb) { mvkPerfTessReport(tessStats); }];
 				if (mtlFeats.nonUniformThreadgroups) {
 					[mtlTessCtlEncoder dispatchThreads: MTLSizeMake(_drawCount, 1, 1)
 								 threadsPerThreadgroup: MTLSizeMake(mtlConvertState.threadExecutionWidth, 1, 1)];
@@ -1300,7 +1305,7 @@ void MVKCmdDrawIndexedIndirect::encode(MVKCommandEncoder* cmdEncoder, const MVKI
         // But not too many, or we'll exhaust available VRAM.
         inControlPointCount = cmdEncoder->getVkGraphics().getPatchControlPoints();
         outControlPointCount = pipeline->getOutputControlPointCount();
-        vertexCount = kMVKMaxDrawIndirectVertexCount;
+        vertexCount = mvkPerfTessIndirectVerts();	// C7: was kMVKMaxDrawIndirectVertexCount
         patchCount = mvkCeilingDivide(vertexCount, inControlPointCount);
         VkDeviceSize indirectSize = (sizeof(MTLDispatchThreadgroupsIndirectArguments) + sizeof(MTLDrawPatchIndirectArguments) + sizeof(MTLStageInRegionIndirectArguments)) * _drawCount;
 		paramsIncr = std::max((size_t)dvcLimits.minUniformBufferOffsetAlignment, sizeof(uint32_t) * 2);
@@ -1380,6 +1385,10 @@ void MVKCmdDrawIndexedIndirect::encode(MVKCommandEncoder* cmdEncoder, const MVKI
                     state.bindStructBytes(mtlTessCtlEncoder, &_drawCount,               6);
                     state.bindStructBytes(mtlTessCtlEncoder, &vtxThreadExecWidth,       7);
                     state.bindStructBytes(mtlTessCtlEncoder, &tcWorkgroupSize,          8);
+                    id<MTLBuffer> tessStats = mvkPerfTessStatsBuffer(cmdEncoder->getMTLDevice());
+                    state.bindBuffer(mtlTessCtlEncoder, tessStats,                    0,                         9);
+                    state.bindStructBytes(mtlTessCtlEncoder, &vertexCount,              10);
+                    [cmdEncoder->_mtlCmdBuffer addCompletedHandler: ^(id<MTLCommandBuffer> mcb) { mvkPerfTessReport(tessStats); }];
                     [mtlTessCtlEncoder dispatchThreadgroups: MTLSizeMake(mvkCeilingDivide<NSUInteger>(_drawCount, mtlConvertState.threadExecutionWidth), 1, 1)
                                       threadsPerThreadgroup: MTLSizeMake(mtlConvertState.threadExecutionWidth, 1, 1)];
                 }

@@ -377,6 +377,26 @@ kernel void cmdDrawIndirectCopyZeroDivisorVertexBuffers(const device char* indir
 	destBuff[idx] = srcBuff[(size_t)baseInstance * vertexStride + byteIdx];
 }
 
+// Enshrouded perf test (C7): record the draw's size in stats (slots as in MVKPerfTess.h), and clamp it to
+// maxVertexCount vertices so it can't write past the scratch buffers sized for that budget.
+static void mvkPerfTessClampDraw(thread uint32_t& vertexCount, thread uint32_t& instanceCount,
+                                 uint32_t inControlPointCount, uint32_t maxVertexCount,
+                                 device atomic_uint* stats) {
+	ulong total = (ulong)vertexCount * instanceCount;
+	atomic_fetch_max_explicit(&stats[0], (uint32_t)min(total, (ulong)0xFFFFFFFF), memory_order_relaxed);
+	atomic_fetch_max_explicit(&stats[1], vertexCount, memory_order_relaxed);
+	atomic_fetch_max_explicit(&stats[2], instanceCount, memory_order_relaxed);
+	atomic_fetch_max_explicit(&stats[3], (uint32_t)min((total + inControlPointCount - 1) / inControlPointCount, (ulong)0xFFFFFFFF), memory_order_relaxed);
+	if (total <= maxVertexCount) { return; }
+	atomic_fetch_add_explicit(&stats[4], 1, memory_order_relaxed);
+	if (vertexCount > maxVertexCount) {
+		vertexCount = maxVertexCount / inControlPointCount * inControlPointCount;	// whole patches only
+		instanceCount = min(instanceCount, 1u);
+	} else {
+		instanceCount = maxVertexCount / vertexCount;
+	}
+}
+
 kernel void cmdDrawIndirectTessConvertBuffers(const device char* srcBuff [[buffer(0)]],
                                               device char* destBuff [[buffer(1)]],
                                               device char* paramsBuff [[buffer(2)]],
@@ -386,6 +406,8 @@ kernel void cmdDrawIndirectTessConvertBuffers(const device char* srcBuff [[buffe
                                               constant uint32_t& drawCount [[buffer(6)]],
                                               constant uint32_t& vtxThreadExecWidth [[buffer(7)]],
                                               constant uint32_t& tcWorkgroupSize [[buffer(8)]],
+                                              device atomic_uint* stats [[buffer(9)]],
+                                              constant uint32_t& maxVertexCount [[buffer(10)]],
                                               uint idx [[thread_position_in_grid]]) {
 	if (idx >= drawCount) { return; }
 	const device auto& src = *reinterpret_cast<const device MTLDrawPrimitivesIndirectArguments*>(srcBuff + idx * srcStride);
@@ -397,11 +419,13 @@ kernel void cmdDrawIndirectTessConvertBuffers(const device char* srcBuff [[buffe
 	device auto& destVtx = *(device MTLDispatchThreadgroupsIndirectArguments*)dest;
 	device auto& destTC = *(device MTLDispatchThreadgroupsIndirectArguments*)(dest + sizeof(MTLDispatchThreadgroupsIndirectArguments));
 	device auto& destTE = *(device MTLDrawPatchIndirectArguments*)(dest + sizeof(MTLDispatchThreadgroupsIndirectArguments) * 2);
-	uint32_t patchCount = (src.vertexCount * src.instanceCount + inControlPointCount - 1) / inControlPointCount;
+	uint32_t vertexCount = src.vertexCount, instanceCount = src.instanceCount;
+	mvkPerfTessClampDraw(vertexCount, instanceCount, inControlPointCount, maxVertexCount, stats);
+	uint32_t patchCount = (vertexCount * instanceCount + inControlPointCount - 1) / inControlPointCount;
 	params[0] = inControlPointCount;
 	params[1] = patchCount;
-	destVtx.threadgroupsPerGrid[0] = (src.vertexCount + vtxThreadExecWidth - 1) / vtxThreadExecWidth;
-	destVtx.threadgroupsPerGrid[1] = src.instanceCount;
+	destVtx.threadgroupsPerGrid[0] = (vertexCount + vtxThreadExecWidth - 1) / vtxThreadExecWidth;
+	destVtx.threadgroupsPerGrid[1] = instanceCount;
 	destVtx.threadgroupsPerGrid[2] = 1;
 	destTC.threadgroupsPerGrid[0] = (patchCount * outControlPointCount + tcWorkgroupSize - 1) / tcWorkgroupSize;
 	destTC.threadgroupsPerGrid[1] = destTC.threadgroupsPerGrid[2] = 1;
@@ -411,8 +435,8 @@ kernel void cmdDrawIndirectTessConvertBuffers(const device char* srcBuff [[buffe
 	destSI.stageInOrigin[0] = src.vertexStart;
 	destSI.stageInOrigin[1] = src.baseInstance;
 	destSI.stageInOrigin[2] = 0;
-	destSI.stageInSize[0] = src.vertexCount;
-	destSI.stageInSize[1] = src.instanceCount;
+	destSI.stageInSize[0] = vertexCount;
+	destSI.stageInSize[1] = instanceCount;
 	destSI.stageInSize[2] = 1;
 }
 
@@ -425,6 +449,8 @@ kernel void cmdDrawIndexedIndirectTessConvertBuffers(const device char* srcBuff 
                                                      constant uint32_t& drawCount [[buffer(6)]],
                                                      constant uint32_t& vtxThreadExecWidth [[buffer(7)]],
                                                      constant uint32_t& tcWorkgroupSize [[buffer(8)]],
+                                                     device atomic_uint* stats [[buffer(9)]],
+                                                     constant uint32_t& maxVertexCount [[buffer(10)]],
                                                      uint idx [[thread_position_in_grid]]) {
 	if (idx >= drawCount) { return; }
 	const device auto& src = *reinterpret_cast<const device MTLDrawIndexedPrimitivesIndirectArguments*>(srcBuff + idx * srcStride);
@@ -436,11 +462,13 @@ kernel void cmdDrawIndexedIndirectTessConvertBuffers(const device char* srcBuff 
 	device auto& destVtx = *(device MTLDispatchThreadgroupsIndirectArguments*)dest;
 	device auto& destTC = *(device MTLDispatchThreadgroupsIndirectArguments*)(dest + sizeof(MTLDispatchThreadgroupsIndirectArguments));
 	device auto& destTE = *(device MTLDrawPatchIndirectArguments*)(dest + sizeof(MTLDispatchThreadgroupsIndirectArguments) * 2);
-	uint32_t patchCount = (src.indexCount * src.instanceCount + inControlPointCount - 1) / inControlPointCount;
+	uint32_t indexCount = src.indexCount, instanceCount = src.instanceCount;
+	mvkPerfTessClampDraw(indexCount, instanceCount, inControlPointCount, maxVertexCount, stats);
+	uint32_t patchCount = (indexCount * instanceCount + inControlPointCount - 1) / inControlPointCount;
 	params[0] = inControlPointCount;
 	params[1] = patchCount;
-	destVtx.threadgroupsPerGrid[0] = (src.indexCount + vtxThreadExecWidth - 1) / vtxThreadExecWidth;
-	destVtx.threadgroupsPerGrid[1] = src.instanceCount;
+	destVtx.threadgroupsPerGrid[0] = (indexCount + vtxThreadExecWidth - 1) / vtxThreadExecWidth;
+	destVtx.threadgroupsPerGrid[1] = instanceCount;
 	destVtx.threadgroupsPerGrid[2] = 1;
 	destTC.threadgroupsPerGrid[0] = (patchCount * outControlPointCount + tcWorkgroupSize - 1) / tcWorkgroupSize;
 	destTC.threadgroupsPerGrid[1] = destTC.threadgroupsPerGrid[2] = 1;
@@ -450,8 +478,8 @@ kernel void cmdDrawIndexedIndirectTessConvertBuffers(const device char* srcBuff 
 	destSI.stageInOrigin[0] = src.baseVertex;
 	destSI.stageInOrigin[1] = src.baseInstance;
 	destSI.stageInOrigin[2] = 0;
-	destSI.stageInSize[0] = src.indexCount;
-	destSI.stageInSize[1] = src.instanceCount;
+	destSI.stageInSize[0] = indexCount;
+	destSI.stageInSize[1] = instanceCount;
 	destSI.stageInSize[2] = 1;
 }
 
