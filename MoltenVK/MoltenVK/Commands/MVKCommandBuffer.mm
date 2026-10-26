@@ -448,9 +448,31 @@ void MVKCommandEncoder::encodeCommands(MVKCommand* command) {
 	}
 }
 
+// Enshrouded perf test (C10): MVK_PERF_HOIST_INDIRECT_COUNT=0 turns off converting indirect-count draws before their render pass.
+static bool mvkPerfHoistIndirectCountEnabled() {
+	static const bool enabled = [] {
+		const char* env = getenv("MVK_PERF_HOIST_INDIRECT_COUNT");
+		bool on = !(env && env[0] == '0');
+		fprintf(stderr, "[mvk-perf] indirect-count conversion before render passes: %s\n", on ? "on" : "off");
+		return on;
+	}();
+	return enabled;
+}
+
+// Enshrouded perf test (C10): before a render pass begins, encode the indirect-count conversions of the draws in it,
+// all in one compute encoder, so none of them has to end and restart the Metal render pass. Stops at the end of the
+// pass, or at a barrier that could make new indirect arguments visible within the pass (later draws convert in place).
+void MVKCommandEncoder::perfHoistIndirectCounts(MVKCommand* firstInRenderPass) {
+	for (MVKCommand* cmd = firstInRenderPass; cmd && !cmd->perfEndsRenderPass(); cmd = cmd->_next) {
+		if (cmd->perfBlocksIndirectHoist()) { break; }
+		cmd->perfHoistIndirectCount(this);
+	}
+}
+
 void MVKCommandEncoder::encodeCommandsImpl(MVKCommand* command) {
     while(command) {
         uint32_t prevMVPassIdx = _multiviewPassIndex;
+		if (command->perfBeginsRenderPass() && mvkPerfHoistIndirectCountEnabled()) { perfHoistIndirectCounts(command->_next); }
         command->encode(this);
 
         if(_multiviewPassIndex > prevMVPassIdx) {

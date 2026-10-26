@@ -111,6 +111,19 @@ VkResult MVKCmdPipelineBarrier<N>::setContent(MVKCommandBuffer* cmdBuff,
 	return VK_SUCCESS;
 }
 
+// Enshrouded perf test (C10): a barrier inside a render pass that makes writes visible to indirect-command
+// reads (or that is not specific about it) means indirect arguments may change within the pass, so draws
+// after it must convert their arguments where they are, not before the pass.
+template <size_t N>
+bool MVKCmdPipelineBarrier<N>::perfBlocksIndirectHoist() {
+	static const VkPipelineStageFlags2 stages = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+	static const VkAccessFlags2 access = VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
+	for (auto& b : _barriers) {
+		if (mvkIsAnyFlagEnabled(b.dstStageMask, stages) || mvkIsAnyFlagEnabled(b.dstAccessMask, access)) { return true; }
+	}
+	return false;
+}
+
 template <size_t N>
 void MVKCmdPipelineBarrier<N>::encode(MVKCommandEncoder* cmdEncoder) {
 	

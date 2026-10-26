@@ -438,6 +438,18 @@ public:
     /** Get a temporary MTLBuffer that will be returned to a pool after the command buffer is finished. */
     const MVKMTLBufferAllocation* getTempMTLBuffer(NSUInteger length, bool isPrivate = false, bool isDedicated = false);
 
+	/** Enshrouded perf test (C10): records an indirect-count conversion encoded before the command's render pass. */
+	void perfAddHoistedIndirect(const MVKCommand* cmd, const MVKMTLBufferAllocation* converted) { _perfHoistedIndirect[cmd] = converted; }
+
+	/** Enshrouded perf test (C10): returns and forgets the conversion encoded before the render pass for this command, or nullptr. */
+	const MVKMTLBufferAllocation* perfTakeHoistedIndirect(const MVKCommand* cmd) {
+		auto it = _perfHoistedIndirect.find(cmd);
+		if (it == _perfHoistedIndirect.end()) { return nullptr; }
+		auto* converted = it->second;
+		_perfHoistedIndirect.erase(it);
+		return converted;
+	}
+
 	/** Copy the bytes to a temporary MTLBuffer that will be returned to a pool after the command buffer is finished. */
 	const MVKMTLBufferAllocation* copyToTempMTLBufferAllocation(const void* bytes, NSUInteger length, bool isDedicated = false);
 
@@ -532,6 +544,7 @@ protected:
 	bool hasMoreMultiviewPasses();
 	void beginNextMultiviewPass();
 	void encodeCommandsImpl(MVKCommand* command);
+	void perfHoistIndirectCounts(MVKCommand* firstInRenderPass);
 	void encodeGPUCounterSample(MVKGPUCounterQueryPool* mvkQryPool, uint32_t sampleIndex, MVKCounterSamplingFlags samplingPoints);
 	void encodeTimestampStageCounterSamples();
 	id<MTLFence> getStageCountersMTLFence();
@@ -558,6 +571,7 @@ protected:
 	VkSubpassContents _subpassContents;
 	uint32_t _renderSubpassIndex;
 	uint32_t _multiviewPassIndex;
+	std::unordered_map<const MVKCommand*, const MVKMTLBufferAllocation*> _perfHoistedIndirect;	// C10
     uint32_t _flushCount;
 	MVKCommandUse _mtlComputeEncoderUse;
 	uint32_t _mtlComputeEncoderStages;

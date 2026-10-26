@@ -162,6 +162,7 @@ public:
 						uint32_t stride);
 
 	void encode(MVKCommandEncoder* cmdEncoder) override;
+	void perfHoistIndirectCount(MVKCommandEncoder* cmdEncoder) override;
 
 protected:
 	MVKCommandTypePool<MVKCommand>* getTypePool(MVKCommandPool* cmdPool) override;
@@ -207,6 +208,7 @@ public:
 
 	void encode(MVKCommandEncoder* cmdEncoder) override;
 	void encode(MVKCommandEncoder* cmdEncoder, const MVKIndexMTLBufferBinding& ibbOrig);
+	void perfHoistIndirectCount(MVKCommandEncoder* cmdEncoder) override;
 
 protected:
 	MVKCommandTypePool<MVKCommand>* getTypePool(MVKCommandPool* cmdPool) override;

@@ -84,6 +84,7 @@ public:
 						const VkImageMemoryBarrier* pImageMemoryBarriers);
 
 	void encode(MVKCommandEncoder* cmdEncoder) override;
+	bool perfBlocksIndirectHoist() override;
 
 protected:
 	MVKCommandTypePool<MVKCommand>* getTypePool(MVKCommandPool* cmdPool) override;
