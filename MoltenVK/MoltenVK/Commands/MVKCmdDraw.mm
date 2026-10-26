@@ -24,6 +24,7 @@
 #include "MVKFoundation.h"
 #include "mvk_datatypes.hpp"
 #include "../GPUObjects/MVKPerfTess.h"
+#include "../GPUObjects/MVKPerfICount.h"
 
 
 #pragma mark -
@@ -670,6 +671,11 @@ static const MVKMTLBufferAllocation* encodeIndirectCountConversion(
 	state.bindStructBytes(computeEncoder, &indirectBufferStride, 2);
 	state.bindStructBytes(computeEncoder, &drawCount, 3);
 	state.bindBuffer(computeEncoder, countBuffer, countBufferOffset, 4);
+	uint32_t icountStatsOn = mvkPerfICountStatsEnabled() ? 1 : 0;
+	id<MTLBuffer> icountStats = mvkPerfICountStatsBuffer(cmdEncoder->getMTLDevice());
+	state.bindBuffer(computeEncoder, icountStats, 0, 5);
+	state.bindStructBytes(computeEncoder, &icountStatsOn, 6);
+	if (icountStatsOn) { mvkPerfICountRecord(icountStats, drawCount); }
 
 	NSUInteger threadWidth = pipeline.threadExecutionWidth;
 	if (cmdEncoder->getMetalFeatures().nonUniformThreadgroups) {

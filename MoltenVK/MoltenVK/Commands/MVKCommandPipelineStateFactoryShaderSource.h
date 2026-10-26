@@ -300,7 +300,17 @@ kernel void cmdDrawIndirectCountConvertBuffers(const device char* srcBuff [[buff
                                                constant uint32_t& srcStride [[buffer(2)]],
                                                constant uint32_t& drawCount [[buffer(3)]],
                                                const device uint32_t* countBuff [[buffer(4)]],
+                                               device atomic_uint* icountStats [[buffer(5)]],
+                                               constant uint32_t& icountStatsOn [[buffer(6)]],
                                                uint idx [[thread_position_in_grid]]) {
+	if (idx == 0 && icountStatsOn) {	// Enshrouded perf D12: real draw counts (slots as in MVKPerfICount.h)
+		uint32_t n = min(countBuff[0], drawCount);
+		atomic_fetch_add_explicit(&icountStats[0], n, memory_order_relaxed);
+		atomic_fetch_max_explicit(&icountStats[1], n, memory_order_relaxed);
+		atomic_fetch_max_explicit(&icountStats[2], (uint32_t)((ulong)n * 1000 / max(drawCount, 1u)), memory_order_relaxed);
+		if (n == 0) { atomic_fetch_add_explicit(&icountStats[3], 1, memory_order_relaxed); }
+		if (countBuff[0] > drawCount) { atomic_fetch_add_explicit(&icountStats[4], 1, memory_order_relaxed); }
+	}
 	if (idx >= drawCount) { return; }
 	const device auto& src = *reinterpret_cast<const device MTLDrawPrimitivesIndirectArguments*>(srcBuff + idx * srcStride);
 	destBuff[idx] = src;
@@ -350,7 +360,17 @@ kernel void cmdDrawIndexedIndirectCountConvertBuffers(const device char* srcBuff
                                                       constant uint32_t& srcStride [[buffer(2)]],
                                                       constant uint32_t& drawCount [[buffer(3)]],
                                                       const device uint32_t* countBuff [[buffer(4)]],
-                                                      uint idx [[thread_position_in_grid]]) {
+                                                      device atomic_uint* icountStats [[buffer(5)]],
+                                               constant uint32_t& icountStatsOn [[buffer(6)]],
+                                               uint idx [[thread_position_in_grid]]) {
+	if (idx == 0 && icountStatsOn) {	// Enshrouded perf D12: real draw counts (slots as in MVKPerfICount.h)
+		uint32_t n = min(countBuff[0], drawCount);
+		atomic_fetch_add_explicit(&icountStats[0], n, memory_order_relaxed);
+		atomic_fetch_max_explicit(&icountStats[1], n, memory_order_relaxed);
+		atomic_fetch_max_explicit(&icountStats[2], (uint32_t)((ulong)n * 1000 / max(drawCount, 1u)), memory_order_relaxed);
+		if (n == 0) { atomic_fetch_add_explicit(&icountStats[3], 1, memory_order_relaxed); }
+		if (countBuff[0] > drawCount) { atomic_fetch_add_explicit(&icountStats[4], 1, memory_order_relaxed); }
+	}
 	if (idx >= drawCount) { return; }
 	const device auto& src = *reinterpret_cast<const device MTLDrawIndexedPrimitivesIndirectArguments*>(srcBuff + idx * srcStride);
 	destBuff[idx] = src;
