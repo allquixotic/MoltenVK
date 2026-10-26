@@ -160,7 +160,21 @@ void MVKCmdPipelineBarrier<N>::encode(MVKCommandEncoder* cmdEncoder) {
 	}
 #endif
 
+	// C2: a barrier whose every entry is compute-to-compute (and needs no host sync) stays inside the open
+	// compute encoder. Anything touching copies, render stages, indirect args or the host keeps the fence path.
+	bool keptInComputeEncoder = false;
 	if (!cmdEncoder->_mtlRenderEncoder && cmdEncoder->isUsingMetalArgumentBuffers() && cmdEncoder->getDevice()->hasResidencySet()) {
+		uint64_t srcStages = 0, dstStages = 0;
+		bool touchesHost = false;
+		for (auto& b : _barriers) {
+			srcStages |= mvkBarrierStagesFromPipelineStageFlags(b.srcStageMask);
+			dstStages |= mvkBarrierStagesFromPipelineStageFlags(b.dstStageMask);
+			touchesHost |= mvkIsAnyFlagEnabled(b.srcStageMask | b.dstStageMask, VK_PIPELINE_STAGE_HOST_BIT);
+		}
+		keptInComputeEncoder = !_barriers.empty() && !touchesHost && cmdEncoder->perfTryInlineComputeBarrier(srcStages, dstStages);
+	}
+
+	if (!keptInComputeEncoder && !cmdEncoder->_mtlRenderEncoder && cmdEncoder->isUsingMetalArgumentBuffers() && cmdEncoder->getDevice()->hasResidencySet()) {
 		cmdEncoder->endCurrentMetalEncoding();
 
 		for (auto& b : _barriers) {

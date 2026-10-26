@@ -1075,6 +1075,31 @@ void MVKCommandEncoder::endCurrentMetalEncoding() {
     _mtlBlitEncoderUse = kMVKCommandUseNone;
 
 	encodeTimestampStageCounterSamples();
+
+	// C2: barriers kept inside the compute encoder that just ended now take effect for later encoders,
+	// exactly as if the encoder had been ended at the last of them (its fence update covers that work).
+	if (_perfDeferredBarrierSrc) {
+		setBarrier(_perfDeferredBarrierSrc, _perfDeferredBarrierDst);
+		_perfDeferredBarrierSrc = _perfDeferredBarrierDst = 0;
+	}
+}
+
+bool MVKCommandEncoder::perfTryInlineComputeBarrier(uint64_t sourceStageMask, uint64_t destStageMask) {
+	static const bool enabled = [] {
+		const char* s = getenv("MVK_PERF_KEEP_COMPUTE_ENCODER");
+		bool on = !s || atoi(s) != 0;
+		fprintf(stderr, "[mvk-perf] C2 compute-to-compute barriers inside the compute encoder: %s\n", on ? "on" : "off");
+		return on;
+	}();
+	const uint64_t computeOnly = 1ull << kMVKBarrierStageCompute;
+	if ( !enabled || !_mtlComputeEncoder || _mtlRenderEncoder || _mtlBlitEncoder ||
+		sourceStageMask != computeOnly || destStageMask != computeOnly ) { return false; }
+
+	// Serial dispatch already orders the dispatches; the memory barrier makes earlier writes visible.
+	[_mtlComputeEncoder memoryBarrierWithScope: MTLBarrierScopeBuffers | MTLBarrierScopeTextures];
+	_perfDeferredBarrierSrc |= sourceStageMask;
+	_perfDeferredBarrierDst |= destStageMask;
+	return true;
 }
 
 static MTLDispatchType getDispatchType(MVKCommandUse use) {

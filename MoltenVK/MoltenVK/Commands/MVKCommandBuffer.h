@@ -455,6 +455,15 @@ public:
 	/** Insert a new execution barrier */
 	void setBarrier(uint64_t sourceStageMask, uint64_t destStageMask);
 
+	/**
+	 * Enshrouded perf C2: a compute-to-compute barrier handled inside the open compute encoder (memory barrier,
+	 * no encoder end). Its fence bookkeeping (setBarrier) is deferred to the end of that encoder, so later
+	 * encoders still wait for all compute work before the barrier. MVK_PERF_KEEP_COMPUTE_ENCODER=0 disables.
+	 */
+	bool perfTryInlineComputeBarrier(uint64_t sourceStageMask, uint64_t destStageMask);
+	uint64_t _perfDeferredBarrierSrc = 0;
+	uint64_t _perfDeferredBarrierDst = 0;
+
 	/** Encode waits for a specific stage in given encoder. */
 	void barrierWait(MVKBarrierStage stage, id<MTLRenderCommandEncoder> mtlEncoder, MTLRenderStages beforeStages);
 	void barrierWait(MVKBarrierStage stage, id<MTLBlitCommandEncoder> mtlEncoder);
