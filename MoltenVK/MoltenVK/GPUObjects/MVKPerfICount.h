@@ -104,12 +104,35 @@ inline void mvkPerfICountRecord(id<MTLBuffer> buff, uint32_t maxDrawCount) {
 	}
 	if (commands % 20000 != 0) { return; }
 
+	// C4d: the cap also comes back down. kMVKPerfICountMaxReal is reset after every window of 20,000 commands
+	// (~2-3 s), so it holds the largest real count of the last window. When that stayed at or below 40% of the
+	// cap for 3 windows in a row, with no truncation, the cap halves (so the new cap is still >= 1.25x the recent
+	// maximum), never below its starting value. Truncations still double it at once (above).
+	// MVK_PERF_ICOUNT_DECAY=0 keeps the old rise-only behaviour.
+	static const bool decay = [] { const char* s = getenv("MVK_PERF_ICOUNT_DECAY"); return !s || atoi(s) != 0; }();
+	static const uint32_t startCap = mvkPerfICountCapValue().load(std::memory_order_relaxed);
+	static uint32_t quietWindows = 0, lastOverMaxSeen = 0;
+	uint32_t windowMax = stats[kMVKPerfICountMaxReal];
+	if (decay && startCap) {
+		auto& capValue = mvkPerfICountCapValue();
+		uint32_t cap = capValue.load(std::memory_order_relaxed);
+		bool truncated = stats[kMVKPerfICountOverMax] != lastOverMaxSeen;
+		lastOverMaxSeen = stats[kMVKPerfICountOverMax];
+		quietWindows = (!truncated && windowMax * 5 <= cap * 2) ? quietWindows + 1 : 0;
+		if (cap > startCap && quietWindows >= 3) {
+			capValue.store(cap / 2, std::memory_order_relaxed);
+			fprintf(stderr, "[mvk-perf] C4d: largest real count %u in the last windows; cap lowered %u -> %u\n", windowMax, cap, cap / 2);
+			quietWindows = 0;
+		}
+		((volatile uint32_t*)buff.contents)[kMVKPerfICountMaxReal] = 0;	// next window (a GPU max may race this; harmless)
+	}
+
 	uint32_t real = stats[kMVKPerfICountRealDraws];		// GPU lags the CPU a little; fine for a summary
 	uint64_t dCmd = commands - lastCommands, dEnc = encoded - lastEncoded, dReal = (uint32_t)(real - lastReal);
 	fprintf(stderr, "[mvk-perf] icount: last %llu commands encoded %llu Metal draws, %llu real (%.2f%%); "
-			"max real per command %u, max fill %.1f%%, empty commands %u, count > max %u (totals so far)\n",
+			"max real per command %u (last window with C4d, else so far), max fill %.1f%%, empty commands %u, truncated %u (totals so far)\n",
 			(unsigned long long)dCmd, (unsigned long long)dEnc, (unsigned long long)dReal, dEnc ? 100.0 * dReal / dEnc : 0.0,
-			stats[kMVKPerfICountMaxReal], stats[kMVKPerfICountMaxFillPerMille] / 10.0,
+			windowMax, stats[kMVKPerfICountMaxFillPerMille] / 10.0,
 			stats[kMVKPerfICountEmptyCommands], stats[kMVKPerfICountOverMax]);
 	std::vector<std::pair<uint64_t, uint32_t>> v;
 	for (auto& kv : histogram) { v.emplace_back(kv.second, kv.first); }

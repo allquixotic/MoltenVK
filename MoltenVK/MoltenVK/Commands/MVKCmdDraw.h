@@ -177,6 +177,7 @@ protected:
 	uint32_t _drawCount;
 	id<MTLBuffer> _mtlCountBuffer;
 	VkDeviceSize _mtlCountBufferOffset;
+	bool _perfCapped = false;	// C4d: the C4 cap lowered _drawCount below the app's maxDrawCount
 };
 
 
@@ -219,4 +220,5 @@ protected:
 	uint32_t _drawCount;
 	id<MTLBuffer> _mtlCountBuffer;
 	VkDeviceSize _mtlCountBufferOffset;
+	bool _perfCapped = false;	// C4d: the C4 cap lowered _drawCount below the app's maxDrawCount
 };

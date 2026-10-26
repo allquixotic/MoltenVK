@@ -309,7 +309,7 @@ kernel void cmdDrawIndirectCountConvertBuffers(const device char* srcBuff [[buff
 		atomic_fetch_max_explicit(&icountStats[1], n, memory_order_relaxed);
 		atomic_fetch_max_explicit(&icountStats[2], (uint32_t)((ulong)n * 1000 / max(drawCount, 1u)), memory_order_relaxed);
 		if (n == 0) { atomic_fetch_add_explicit(&icountStats[3], 1, memory_order_relaxed); }
-		if (countBuff[0] > drawCount) { atomic_fetch_add_explicit(&icountStats[4], 1, memory_order_relaxed); }
+		if ((icountStatsOn & 2) && countBuff[0] > drawCount) { atomic_fetch_add_explicit(&icountStats[4], 1, memory_order_relaxed); }	/* C4d */
 	}
 	if (idx >= drawCount) { return; }
 	const device auto& src = *reinterpret_cast<const device MTLDrawPrimitivesIndirectArguments*>(srcBuff + idx * srcStride);
@@ -369,7 +369,7 @@ kernel void cmdDrawIndexedIndirectCountConvertBuffers(const device char* srcBuff
 		atomic_fetch_max_explicit(&icountStats[1], n, memory_order_relaxed);
 		atomic_fetch_max_explicit(&icountStats[2], (uint32_t)((ulong)n * 1000 / max(drawCount, 1u)), memory_order_relaxed);
 		if (n == 0) { atomic_fetch_add_explicit(&icountStats[3], 1, memory_order_relaxed); }
-		if (countBuff[0] > drawCount) { atomic_fetch_add_explicit(&icountStats[4], 1, memory_order_relaxed); }
+		if ((icountStatsOn & 2) && countBuff[0] > drawCount) { atomic_fetch_add_explicit(&icountStats[4], 1, memory_order_relaxed); }	/* C4d */
 	}
 	if (idx >= drawCount) { return; }
 	const device auto& src = *reinterpret_cast<const device MTLDrawIndexedPrimitivesIndirectArguments*>(srcBuff + idx * srcStride);

@@ -657,6 +657,7 @@ static const MVKMTLBufferAllocation* encodeIndirectCountConversion(
 		id<MTLBuffer> countBuffer,
 		VkDeviceSize countBufferOffset,
 		uint32_t drawCount,
+		bool perfCapped,				// C4d: drawCount was lowered by the C4 cap
 		bool indexed,
 		bool inRenderPass = true) {	// C10: false when encoded before the render pass begins
 	VkDeviceSize commandSize = indexed ? sizeof(MTLDrawIndexedPrimitivesIndirectArguments) : sizeof(MTLDrawPrimitivesIndirectArguments);
@@ -672,7 +673,7 @@ static const MVKMTLBufferAllocation* encodeIndirectCountConversion(
 	state.bindStructBytes(computeEncoder, &indirectBufferStride, 2);
 	state.bindStructBytes(computeEncoder, &drawCount, 3);
 	state.bindBuffer(computeEncoder, countBuffer, countBufferOffset, 4);
-	uint32_t icountStatsOn = mvkPerfICountStatsEnabled() ? 1 : 0;
+	uint32_t icountStatsOn = mvkPerfICountStatsEnabled() ? (perfCapped ? 3 : 1) : 0;	// bit 1 (C4d): only capped commands can be truncated
 	id<MTLBuffer> icountStats = mvkPerfICountStatsBuffer(cmdEncoder->getMTLDevice());
 	state.bindBuffer(computeEncoder, icountStats, 0, 5);
 	state.bindStructBytes(computeEncoder, &icountStatsOn, 6);
@@ -819,7 +820,7 @@ VkResult MVKCmdDrawIndirect::setContent(MVKCommandBuffer* cmdBuff,
 	}
 	MVKBuffer* mvkCountBuffer = (MVKBuffer*)countBuffer;
 	_mtlCountBuffer = mvkCountBuffer->getMTLBuffer();
-	_drawCount = mvkPerfICountCap(_drawCount);		// C4
+	{ uint32_t appMax = _drawCount; _drawCount = mvkPerfICountCap(_drawCount); _perfCapped = _drawCount < appMax; }	// C4, C4d
 	_mtlCountBufferOffset = mvkCountBuffer->getMTLBufferOffset() + countBufferOffset;
 	return VK_SUCCESS;
 }
@@ -879,7 +880,7 @@ void MVKCmdDrawIndirect::perfHoistIndirectCount(MVKCommandEncoder* cmdEncoder) {
 	if ( !_mtlCountBuffer || _drawCount == 0 ) { return; }
 	cmdEncoder->perfAddHoistedIndirect(this, encodeIndirectCountConversion(cmdEncoder, _mtlIndirectBuffer, _mtlIndirectBufferOffset,
 																		 _mtlIndirectBufferStride, _mtlCountBuffer, _mtlCountBufferOffset,
-																		 _drawCount, false, false));
+																		 _drawCount, _perfCapped, false, false));
 }
 
 void MVKCmdDrawIndirect::encode(MVKCommandEncoder* cmdEncoder) {
@@ -899,6 +900,7 @@ void MVKCmdDrawIndirect::encode(MVKCommandEncoder* cmdEncoder) {
 				_mtlCountBuffer,
 				_mtlCountBufferOffset,
 				_drawCount,
+				_perfCapped,
 				false);
 		}
 		indirectBuffer = convertedBuffer->_mtlBuffer;
@@ -1234,7 +1236,7 @@ VkResult MVKCmdDrawIndexedIndirect::setContent(MVKCommandBuffer* cmdBuff,
 	}
 	MVKBuffer* mvkCountBuffer = (MVKBuffer*)countBuffer;
 	_mtlCountBuffer = mvkCountBuffer->getMTLBuffer();
-	_drawCount = mvkPerfICountCap(_drawCount);		// C4
+	{ uint32_t appMax = _drawCount; _drawCount = mvkPerfICountCap(_drawCount); _perfCapped = _drawCount < appMax; }	// C4, C4d
 	_mtlCountBufferOffset = mvkCountBuffer->getMTLBufferOffset() + countBufferOffset;
 	return VK_SUCCESS;
 }
@@ -1244,7 +1246,7 @@ void MVKCmdDrawIndexedIndirect::perfHoistIndirectCount(MVKCommandEncoder* cmdEnc
 	if ( !_mtlCountBuffer || _drawCount == 0 ) { return; }
 	cmdEncoder->perfAddHoistedIndirect(this, encodeIndirectCountConversion(cmdEncoder, _mtlIndirectBuffer, _mtlIndirectBufferOffset,
 																		 _mtlIndirectBufferStride, _mtlCountBuffer, _mtlCountBufferOffset,
-																		 _drawCount, true, false));
+																		 _drawCount, _perfCapped, true, false));
 }
 
 void MVKCmdDrawIndexedIndirect::encode(MVKCommandEncoder* cmdEncoder) {
@@ -1267,6 +1269,7 @@ void MVKCmdDrawIndexedIndirect::encode(MVKCommandEncoder* cmdEncoder, const MVKI
 				_mtlCountBuffer,
 				_mtlCountBufferOffset,
 				_drawCount,
+				_perfCapped,
 				true);
 		}
 		indirectBuffer = convertedBuffer->_mtlBuffer;
