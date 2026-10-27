@@ -2,6 +2,10 @@
 	<img src="Docs/images/MoltenVK-Logo-Banner.png" alt="MoltenVK" style="width:256px;height:auto">
 </a><br><br>
 
+This personal `enshrouded-v19-audited` branch preserves nivogli's v19 work,
+adds command-reuse and synchronization corrections, and publishes the
+[source audit, remaining correctness compromises and HDR findings](Docs/Enshrouded-v19-audit.txt).
+Targeted source-only regression probes are in [Tests/EnshroudedAudit](Tests/EnshroudedAudit).
 
 > [!CAUTION]
 > **Deprecation notice:** Khronos has deprecated MoltenVK, its Vulkan-on-Metal implementation. This repository is now maintained by the community on a best-effort basis.

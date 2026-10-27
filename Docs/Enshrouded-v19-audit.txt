@@ -1,0 +1,267 @@
+MoltenVK Enshrouded v19: source audit and corrections
+====================================================
+
+Audit performed 2026-10-26; publication updated 2026-10-27.
+Hardware: Apple M5 Max, macOS 27.0.1, athei Wine arm64-11.20-3.
+
+RESULT AND SCOPE
+
+Reviewed every source delta between nivogli's published enshrouded-v19
+snapshot and its official Khronos upstream base: 15 commits, 14 files,
+664 added lines and 40 removed lines. No evidence of a backdoor or added
+exfiltration, credential access, process execution, persistence, or hidden
+download behavior was found in those changes. This is a bounded source
+review and targeted GPU validation, not a proof of security or a complete
+audit of Wine, upstream MoltenVK, its dependencies, or the Apple toolchain.
+
+The fork is an experimental Enshrouded performance build. It is not fully
+Vulkan-correct under all workloads. A reproduced persistent draw-truncation
+bug was fixed locally. Two further synchronization/hoisting corrections
+were included. The performance profile still deliberately trades rendering
+and numerical guarantees for speed; the remaining limitations are below.
+
+SOURCE AND ATTRIBUTION
+
+Official Khronos base: 5189f8de86ec365860f63bf1da736815cfaea5cd
+Nivogli v19 snapshot: 96793f1de5fd898a8e4ad3b7d7b52f23b8bac483
+Correction commit:   90d09291a422c572841a189288ff98b838e68d86
+
+The performance work belongs to nivogli and the inherited MoltenVK authors:
+https://github.com/nivogli/MoltenVK
+https://github.com/KhronosGroup/MoltenVK/issues/2841#issuecomment-6427388417
+The synchronization-scope correction follows upstream PR 2891:
+https://github.com/KhronosGroup/MoltenVK/pull/2891
+
+The local correction and this report were developed with LLM assistance.
+The correction's original commit is preserved because it identifies the
+validated binary; its author is Codex. Publication commits are labelled
+Generated-by: LLM. This is a personal experimental branch, not a claim of
+upstream acceptance or independent security certification.
+
+Built from inspected source with unchanged upstream fetchDependencies and
+make macos procedures; no nivogli executable download was used. The fork
+changes no dependency pins, CI, build scripts or Xcode project files and
+adds no executable binary. Native dependencies are Apple system frameworks;
+static shader dependencies remain part of the upstream trusted code base.
+This source-delta review does not audit those dependencies in full.
+
+The locally validated universal arm64/x86_64 library has SHA-256:
+487fb1cf611ef08c0fce057f1671e9e806a152c5ab92fcec9d5640a1286898c4
+It reports MoltenVK 1.4.3 and was built at the correction commit above.
+Later documentation commits can change Git-derived cache identity; rebuilds
+need not have the same binary hash. Math flags are not automatically included
+in that cache UUID. Keep shader-cache provenance when changing those flags.
+
+COMPLETE FILE COVERAGE
+
+Paths below are relative to MoltenVK/MoltenVK/. Reproduce the reviewed delta:
+
+  git diff 5189f8de86ec365860f63bf1da736815cfaea5cd..96793f1de5fd898a8e4ad3b7d7b52f23b8bac483
+
+The correction is commit 90d09291a422c572841a189288ff98b838e68d86.
+Original nivogli commits and their authorship are preserved in this branch.
+
+1. Commands/MVKCmdDraw.h
+   Adds indirect-count hoist hooks and a record-time capped-state flag.
+   The latter participated in the reproduced command-reuse bug.
+
+2. Commands/MVKCmdDraw.mm
+   Adds count-conversion statistics, draw caps, pre-render conversion,
+   reflected tessellation-buffer sizing, vertex budgets, and completion
+   diagnostics. Reviewed allocation sizes, dispatch/draw loop counts,
+   indexed and non-indexed paths, and buffer ownership. Fixed cap selection
+   so reused commands can adapt; matched hoisted allocations to their
+   selected count. Tessellation limits remain intentionally lossy.
+
+3. Commands/MVKCmdPipeline.h
+   Adds a barrier hook for the indirect-conversion scan. Locally extended
+   the stopping rule to execution of secondary command buffers.
+
+4. Commands/MVKCmdPipeline.mm
+   Tests whether barriers stop hoisting and keeps eligible compute
+   barriers in an open encoder. The fork strips TOP/BOTTOM stage bits in
+   this optimization path, but omitted the equivalent fallback fix.
+   Locally completed it using the published synchronization-scope fix.
+
+5. Commands/MVKCmdRendering.h
+   Marks dynamic-rendering begin/end boundaries for hoisting. Classic
+   render-pass beginnings are intentionally excluded because they apply
+   external dependencies. No swapchain/HDR presentation behavior changes.
+
+6. Commands/MVKCommand.h
+   Adds virtual hooks for identifying boundaries and hoistable commands.
+   No external I/O or executable-code loading is introduced.
+
+7. Commands/MVKCommandBuffer.h
+   Adds temporary conversion lookup and deferred-barrier state. Locally
+   changed each lookup value to include the selected draw count, preventing
+   a later cap increase from mismatching an earlier allocation.
+
+8. Commands/MVKCommandBuffer.mm
+   Adds the scan ahead of dynamic rendering, compute memory barriers,
+   deferred fences for later encoders, and concurrent application compute
+   dispatch. Internal compute work retains its existing dispatch modes.
+   GPU tests cover dependent compute work followed by a transfer/readback;
+   they do not constitute exhaustive Vulkan synchronization conformance.
+
+9. Commands/MVKCommandPipelineStateFactoryShaderSource.h
+   Adds GPU atomic counters and tessellation draw clamping. Counter buffer
+   slots were checked against the CPU headers. Tessellation product
+   accounting uses 64-bit arithmetic before clamping. The clamp prevents
+   exceeding the selected scratch budget by reducing work, so an oversized
+   draw can lose vertices or instances rather than render in full.
+
+10. GPUObjects/MVKPerfICount.h (new)
+    Environment parsing, a small shared GPU statistics buffer, a mutex,
+    adaptive cap, histograms, and stderr diagnostics. No remote telemetry.
+    GPU/CPU statistics are approximate and not fully synchronized. The
+    maximum is measured after capping, and therefore is not the true
+    uncapped maximum. The decay floor can preserve an overshot limit.
+
+11. GPUObjects/MVKPerfTess.h (new)
+    Validates the configured vertex budget, owns another small shared
+    statistics buffer, and emits throttled stderr diagnostics. Both new
+    statistics buffers are process-global and retained for process life;
+    this design is not robust for multiple Metal devices. This Mac uses
+    one Apple GPU. No credential or network behavior was found.
+
+12. GPUObjects/MVKPipeline.h
+    Adds reflected buffer-size fields, bounded reflection index storage,
+    and stride accessors with fallback values.
+
+13. GPUObjects/MVKPipeline.mm
+    Requests Metal reflection, combines producer/consumer sizes, rounds
+    accepted sizes to 16 bytes, and falls back for unknown/implausible
+    sizes. Reviewed callback locking and lifetime against upstream's
+    compiler pattern. This is a sensible memory-saving approach, but the
+    full tessellation shader space was not GPU-conformance-tested here.
+
+14. GPUObjects/MVKShaderModule.mm
+    Removes optnone from selected SPIRV-Cross precise-math helpers outside
+    detected vertex shaders, optionally rewrites precise:: calls to fast::,
+    and adds math-mode overrides. These are transparent source transforms,
+    not obfuscated payloads. They relax numerical requirements and depend
+    on generated MSL formatting. They are inappropriate as a blanket
+    general-purpose Vulkan correctness guarantee.
+
+LOCAL CORRECTIONS AND EVIDENCE
+
+A. Reused command buffers could remain capped forever — fixed, reproduced.
+   The fork permanently replaced the application's maximum at recording
+   time. Increasing a global limit did not restore that saved maximum.
+   A GPU probe records one command buffer with 256 real draws, application
+   maximum 1024, and starting cap 128, then submits it six times.
+
+   Pristine v19 actual draws: 128, 128, 128, 128, 128, 128.
+   Corrected actual draws:   128, 128, 256, 256, 256, 256.
+   Uncapped actual draws:    256, 256, 256, 256, 256, 256.
+
+   The correction retains the application maximum and evaluates the cap
+   during encoding. A hoisted conversion stores its own count alongside
+   its allocation so later cap changes cannot enlarge its consumer loop.
+   Indexed, non-indexed, and hoisting-disabled variants passed. The final
+   installed binary also passed through athei 11.20-3 Wine/FEX using a
+   separate scratch prefix and the same per-executable driver selection.
+
+   PASS in these probe logs means eventual recovery and the checked compute
+   dependency result. It does NOT mean the first capped submissions render
+   all requested draws. Temporary truncation remains inherent in this
+   feedback-based cap; it can recur when a later scene exceeds the limit.
+
+B. Secondary command buffers were not a hoist boundary — guarded locally.
+   A secondary buffer can contain a dependency that the primary scan does
+   not inspect. The scan now stops there, leaving subsequent conversions
+   in their original position. This is a conservative code-review fix;
+   there is no dedicated GPU reproducer for this boundary in the evidence.
+
+C. TOP_OF_PIPE/BOTTOM_OF_PIPE fix was only partial — completed locally.
+   Applied the published PR 2891 semantics to the fallback barrier path
+   and GPUObjects/MVKRenderPass.mm subpass dependencies. TOP in the source
+   scope and BOTTOM in the destination scope add no stages. The fork had
+   applied that rule only in its inline-compute optimization. The compute
+   probe exercises these flags, including a later copy/readback; subpass
+   coverage is source review and compilation, not a dedicated GPU test.
+
+REMAINING LIMITATIONS / HISTORICAL MOLTENVK PROFILE
+
+The tested MoltenVK probe configuration and historical per-game launcher used:
+  MVK_CONFIG_FAST_MATH_ENABLED=1
+  MVK_PERF_FAST_TRANSCENDENTALS=1
+  MVK_PERF_ICOUNT_MAX_DRAWS=128
+  MVK_PERF_TESS_INDIRECT_VERTS=262144
+The branch's C2/C3/C2-wide/C10 and precise-helper optimization defaults
+remain enabled. The optional MVK_PERF_MATH_MODE override is not enabled.
+
+The draw cap can briefly omit visible work. MVK_PERF_ICOUNT_MAX_DRAWS=0 disables it
+without changing shader precision or the tessellation budget, and may
+reduce performance. It is not a fully strict/conformant profile.
+The tessellation budget can permanently truncate any draw exceeding it.
+The stderr diagnostics report clamps but do not automatically grow it.
+Fast math may change NaN/Inf/signed-zero, contraction, and precision behavior.
+Nivogli's reported performance and visual assessment were for Enshrouded
+on his M5 Pro with HDR off. No local game FPS, visual comparison, Blueprint
+stress test, or long gameplay stability test was performed in this task.
+
+HDR INVESTIGATION
+
+The fork does not change upstream swapchain, CAMetalLayer, colorspace, or
+drawable-presentation code. Upstream already schedules drawable.present
+in a command-buffer scheduled handler. Apple's command-buffer present
+convenience API uses that same mechanism, so simply swapping APIs has no
+established benefit here.
+
+The existing game log showed HDR RGB10A2/PQ, three swapchain images, and
+IMMEDIATE presentation. It already used the commonly suggested triple
+buffering configuration. That log describes the prior KosmicKrisp run,
+not a new MoltenVK game run.
+
+A standalone native Metal window tested the same scheduled-present pattern
+on the 120 Hz display, using 2/3 drawable buffers, SDR/HDR, and VSync off/on.
+It did not launch the game. Each case ran 240 frames and discarded warmup
+and tail samples. HDR used RGB10A2, PQ colorspace, and extended dynamic
+range. The probe is small and lightly loaded; it does not recreate Wine's
+fullscreen window, Enshrouded's rendering load, or full HDR brightness.
+Reported EDR headroom also varied between runs (1.0 and 1.2).
+
+First pass: HDR/VSync-off late intervals (>1.5 refreshes) were 3 with two
+buffers and 1 with three. However, a paired HDR-only repeat in 3,2,2,3 order
+produced 3,21,32,18 late intervals. Median GPU-completion-to-presentation
+delay varied from roughly 3–20 ms in that repeat. This does not establish
+a stable triple-buffering remedy or isolate an HDR-only driver defect.
+
+VSync-on cases had no late intervals in the short initial test and an
+8.333 ms 95th-percentile interval, but about 23–27 ms median delay from
+GPU completion to presentation. Scheduled-handler delays were around
+0.1–0.23 ms at the 95th percentile, not an obvious full-refresh bottleneck
+in this probe. No drawable acquisition failures occurred.
+
+Conclusion: no proven HDR fix yet. Forcing VSync would be a latency/tearing
+tradeoff, not a demonstrated correction to the reported defect. Game HDR,
+VSync, resolution, and quality settings remain untouched. The next useful
+diagnostic would be an actual HDR/SDR capture of the same game scene with
+GPU completion, drawable presentation, and refresh timing correlated.
+That was not performed in this MoltenVK investigation. Later user tests
+used a separate experimental KosmicKrisp branch; they do not validate MoltenVK.
+
+REPRODUCING TARGETED TESTS
+
+  ./fetchDependencies --macos
+  make macos
+
+Follow the upstream README for current build prerequisites. Standalone probe
+source, two minimal shader inputs and embedded SPIR-V are in
+Tests/EnshroudedAudit. The README there describes indexed/non-indexed,
+uncapped and hoisting-disabled comparisons. The probe's final PASS checks
+eventual recovery, not correctness of every capped submission.
+
+The corrected native driver and the same library through Wine/FEX passed
+the targeted tests. Full Vulkan CTS, broad tessellation coverage, a dedicated
+secondary-command hoisting reproducer and subpass GPU coverage were not run.
+No executable, game data, generated game shader, raw user log or crash dump
+is included in this publication. Nothing here fixes HDR pacing or removes
+the fork's remaining deliberate rendering/precision compromises.
+
+Subsequent work targets exact execution in maintained KosmicKrisp:
+https://github.com/allquixotic/mesa/tree/enshrouded-kk-investigation
+Its successful game profile and unresolved compilation/cache issues are
+reported separately. It does not depend on this MoltenVK branch.
